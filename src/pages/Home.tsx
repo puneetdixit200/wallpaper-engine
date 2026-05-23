@@ -6,9 +6,9 @@ import { Mood, Wallpaper } from "../types";
 interface HomePageProps {
   busy: string | null;
   currentWallpaper: Wallpaper | null;
-  hasAnyKey: boolean;
   mood: Mood;
   notice: string;
+  providerState: string;
   onMoodSelect: (mood: Mood) => void;
   onNext: () => void;
   onRandom: () => void;
@@ -18,9 +18,9 @@ interface HomePageProps {
 export function HomePage({
   busy,
   currentWallpaper,
-  hasAnyKey,
   mood,
   notice,
+  providerState,
   onMoodSelect,
   onNext,
   onRandom,
@@ -37,8 +37,8 @@ export function HomePage({
           <p className="eyebrow">Current wallpaper</p>
           <h2>Make the desktop look right now</h2>
         </div>
-        <div className={hasAnyKey ? "key-state ready" : "key-state"}>
-          {hasAnyKey ? "API keys saved" : "API keys needed"}
+        <div className="key-state ready">
+          {providerState}
         </div>
       </header>
 

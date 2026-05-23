@@ -358,7 +358,10 @@ button:disabled {
 }
 
 .segmented-control {
-  display: inline-flex;
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  max-width: 650px;
   padding: 4px;
   border-radius: 8px;
   background: #dfe7df;

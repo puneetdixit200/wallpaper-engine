@@ -50,7 +50,7 @@ function App() {
     files: 0,
   });
   const [query, setQuery] = useState("nature");
-  const [source, setSource] = useState<ApiSource>("both");
+  const [source, setSource] = useState<ApiSource>("all");
   const [mood, setMood] = useState<Mood>("nature");
   const [results, setResults] = useState<Wallpaper[]>([]);
   const [page, setPage] = useState(1);
@@ -60,8 +60,17 @@ function App() {
   const hasAnyKey = useMemo(
     () =>
       settings.apiKeys.pexels.trim().length > 0 ||
-      settings.apiKeys.unsplash.trim().length > 0,
-    [settings.apiKeys.pexels, settings.apiKeys.unsplash],
+      settings.apiKeys.unsplash.trim().length > 0 ||
+      settings.apiKeys.pixabay.trim().length > 0 ||
+      settings.apiKeys.wallhaven.trim().length > 0 ||
+      settings.apiKeys.deviantart.trim().length > 0,
+    [
+      settings.apiKeys.pexels,
+      settings.apiKeys.unsplash,
+      settings.apiKeys.pixabay,
+      settings.apiKeys.wallhaven,
+      settings.apiKeys.deviantart,
+    ],
   );
 
   const refreshLibrary = useCallback(async () => {
@@ -221,7 +230,7 @@ function App() {
       <HomePage
         busy={busy}
         currentWallpaper={currentWallpaper}
-        hasAnyKey={hasAnyKey}
+        providerState={hasAnyKey ? "API keys saved" : "Free sources ready"}
         mood={mood}
         notice={notice}
         onMoodSelect={applyMood}

@@ -6,8 +6,16 @@ use std::path::{Path, PathBuf};
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub struct ApiKeys {
+    #[serde(default)]
     pub pexels: String,
+    #[serde(default)]
     pub unsplash: String,
+    #[serde(default)]
+    pub pixabay: String,
+    #[serde(default)]
+    pub wallhaven: String,
+    #[serde(default)]
+    pub deviantart: String,
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
@@ -32,6 +40,9 @@ impl Default for ApiKeys {
         Self {
             pexels: String::new(),
             unsplash: String::new(),
+            pixabay: String::new(),
+            wallhaven: String::new(),
+            deviantart: String::new(),
         }
     }
 }
@@ -51,6 +62,9 @@ impl AppSettings {
     pub fn sanitized(mut self) -> Self {
         self.api_keys.pexels = self.api_keys.pexels.trim().to_string();
         self.api_keys.unsplash = self.api_keys.unsplash.trim().to_string();
+        self.api_keys.pixabay = self.api_keys.pixabay.trim().to_string();
+        self.api_keys.wallhaven = self.api_keys.wallhaven.trim().to_string();
+        self.api_keys.deviantart = self.api_keys.deviantart.trim().to_string();
         self.cache_limit_mb = self.cache_limit_mb.clamp(128, 10_240);
         self.auto_change_minutes = match self.auto_change_minutes {
             0 | 15 | 30 | 60 | 120 | 360 => self.auto_change_minutes,
@@ -112,6 +126,9 @@ mod tests {
             api_keys: ApiKeys {
                 pexels: "pexels-key".into(),
                 unsplash: "unsplash-key".into(),
+                pixabay: "pixabay-key".into(),
+                wallhaven: "wallhaven-key".into(),
+                deviantart: "deviantart-token".into(),
             },
             ..AppSettings::default()
         };
@@ -121,6 +138,9 @@ mod tests {
 
         assert_eq!(loaded.api_keys.pexels, "pexels-key");
         assert_eq!(loaded.api_keys.unsplash, "unsplash-key");
+        assert_eq!(loaded.api_keys.pixabay, "pixabay-key");
+        assert_eq!(loaded.api_keys.wallhaven, "wallhaven-key");
+        assert_eq!(loaded.api_keys.deviantart, "deviantart-token");
 
         let _ = fs::remove_file(path);
     }
@@ -133,6 +153,9 @@ mod tests {
 
         assert_eq!(loaded.api_keys.pexels, "");
         assert_eq!(loaded.api_keys.unsplash, "");
+        assert_eq!(loaded.api_keys.pixabay, "");
+        assert_eq!(loaded.api_keys.wallhaven, "");
+        assert_eq!(loaded.api_keys.deviantart, "");
         assert_eq!(loaded.resolution, ResolutionPreference::Auto);
         assert_eq!(loaded.auto_change_minutes, 0);
         assert_eq!(loaded.cache_limit_mb, 1024);

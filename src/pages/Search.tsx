@@ -16,7 +16,16 @@ interface SearchPageProps {
   onSourceChange: (source: ApiSource) => void;
 }
 
-const sourceOptions: ApiSource[] = ["both", "pexels", "unsplash"];
+const sourceOptions: Array<{ label: string; value: ApiSource }> = [
+  { label: "all", value: "all" },
+  { label: "pexels", value: "pexels" },
+  { label: "unsplash", value: "unsplash" },
+  { label: "pixabay", value: "pixabay" },
+  { label: "wallhaven", value: "wallhaven" },
+  { label: "picsum", value: "picsum" },
+  { label: "deviantArt", value: "deviantArt" },
+  { label: "artStation", value: "artStation" },
+];
 
 export function SearchPage({
   busy,
@@ -41,12 +50,12 @@ export function SearchPage({
         <div className="segmented-control" aria-label="API source">
           {sourceOptions.map((option) => (
             <button
-              className={source === option ? "active" : ""}
-              key={option}
-              onClick={() => onSourceChange(option)}
+              className={source === option.value ? "active" : ""}
+              key={option.value}
+              onClick={() => onSourceChange(option.value)}
               type="button"
             >
-              {option}
+              {option.label}
             </button>
           ))}
         </div>

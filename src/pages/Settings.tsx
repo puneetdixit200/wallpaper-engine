@@ -46,6 +46,15 @@ export function SettingsPage({
     onSave(draft);
   }
 
+  function updateApiKey(key: keyof AppSettings["apiKeys"], value: string) {
+    updateDraft({
+      apiKeys: {
+        ...draft.apiKeys,
+        [key]: value,
+      },
+    });
+  }
+
   return (
     <div className="view-stack">
       <header className="view-header">
@@ -60,14 +69,7 @@ export function SettingsPage({
           <span>Pexels API key</span>
           <input
             autoComplete="off"
-            onChange={(event) =>
-              updateDraft({
-                apiKeys: {
-                  ...draft.apiKeys,
-                  pexels: event.currentTarget.value,
-                },
-              })
-            }
+            onChange={(event) => updateApiKey("pexels", event.currentTarget.value)}
             placeholder="Paste Pexels key"
             type="password"
             value={draft.apiKeys.pexels}
@@ -78,19 +80,47 @@ export function SettingsPage({
           <span>Unsplash API key</span>
           <input
             autoComplete="off"
-            onChange={(event) =>
-              updateDraft({
-                apiKeys: {
-                  ...draft.apiKeys,
-                  unsplash: event.currentTarget.value,
-                },
-              })
-            }
+            onChange={(event) => updateApiKey("unsplash", event.currentTarget.value)}
             placeholder="Paste Unsplash access key"
             type="password"
             value={draft.apiKeys.unsplash}
           />
         </label>
+
+        <div className="form-grid">
+          <label>
+            <span>Pixabay API key</span>
+            <input
+              autoComplete="off"
+              onChange={(event) => updateApiKey("pixabay", event.currentTarget.value)}
+              placeholder="Paste Pixabay key"
+              type="password"
+              value={draft.apiKeys.pixabay}
+            />
+          </label>
+
+          <label>
+            <span>Wallhaven API key</span>
+            <input
+              autoComplete="off"
+              onChange={(event) => updateApiKey("wallhaven", event.currentTarget.value)}
+              placeholder="Optional for SFW search"
+              type="password"
+              value={draft.apiKeys.wallhaven}
+            />
+          </label>
+
+          <label>
+            <span>DeviantArt access token</span>
+            <input
+              autoComplete="off"
+              onChange={(event) => updateApiKey("deviantart", event.currentTarget.value)}
+              placeholder="OAuth access token"
+              type="password"
+              value={draft.apiKeys.deviantart}
+            />
+          </label>
+        </div>
 
         <div className="form-grid">
           <label>

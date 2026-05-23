@@ -65,13 +65,7 @@ async fn set_wallpaper(
     state: State<'_, AppState>,
     wallpaper: Wallpaper,
 ) -> Result<Wallpaper, String> {
-    set_wallpaper_inner(
-        &state.client,
-        &state.cache_dir,
-        &state.db_path,
-        wallpaper,
-    )
-    .await
+    set_wallpaper_inner(&state.client, &state.cache_dir, &state.db_path, wallpaper).await
 }
 
 #[tauri::command]
@@ -127,7 +121,7 @@ async fn apply_random_wallpaper_inner(
 ) -> Result<Wallpaper, String> {
     let settings = load_settings_from_path(&settings_path)
         .map_err(|error| format!("Could not load settings: {error}"))?;
-    match api::random_wallpapers(&client, ApiSource::Both, &settings.api_keys).await {
+    match api::random_wallpapers(&client, ApiSource::All, &settings.api_keys).await {
         Ok(mut wallpapers) => {
             let wallpaper = wallpapers
                 .drain(..)

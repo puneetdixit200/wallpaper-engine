@@ -1,5 +1,14 @@
 export type ViewName = "home" | "search" | "library" | "settings";
-export type ApiSource = "pexels" | "unsplash" | "both";
+export type ApiSource =
+  | "all"
+  | "pexels"
+  | "unsplash"
+  | "pixabay"
+  | "wallhaven"
+  | "picsum"
+  | "deviantArt"
+  | "artStation"
+  | "both";
 export type ResolutionPreference = "auto" | "fullHd" | "fourK";
 
 export type Mood =
@@ -14,6 +23,9 @@ export type Mood =
 export interface ApiKeys {
   pexels: string;
   unsplash: string;
+  pixabay: string;
+  wallhaven: string;
+  deviantart: string;
 }
 
 export interface AppSettings {
@@ -50,6 +62,9 @@ export const defaultSettings: AppSettings = {
   apiKeys: {
     pexels: "",
     unsplash: "",
+    pixabay: "",
+    wallhaven: "",
+    deviantart: "",
   },
   autoChangeMinutes: 0,
   resolution: "auto",

@@ -132,14 +132,9 @@ fn encode_uri_path(value: &str) -> String {
     let mut encoded = String::new();
     for byte in value.bytes() {
         match byte {
-            b'A'..=b'Z'
-            | b'a'..=b'z'
-            | b'0'..=b'9'
-            | b'/'
-            | b'-'
-            | b'.'
-            | b'_'
-            | b'~' => encoded.push(byte as char),
+            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'/' | b'-' | b'.' | b'_' | b'~' => {
+                encoded.push(byte as char)
+            }
             _ => encoded.push_str(&format!("%{byte:02X}")),
         }
     }
@@ -185,15 +180,15 @@ mod tests {
     fn linux_commands_include_gnome_and_common_wallpaper_tools() {
         let commands = linux_wallpaper_commands(Path::new("/home/me/Pictures/wall one.jpg"));
 
-        assert!(commands
-            .iter()
-            .any(|command| command.program == "gsettings"
-                && command.args.contains(&"picture-uri".to_string())
-                && command
-                    .args
-                    .contains(&"file:///home/me/Pictures/wall%20one.jpg".to_string())));
+        assert!(commands.iter().any(|command| command.program == "gsettings"
+            && command.args.contains(&"picture-uri".to_string())
+            && command
+                .args
+                .contains(&"file:///home/me/Pictures/wall%20one.jpg".to_string())));
         assert!(commands.iter().any(|command| command.program == "swww"));
         assert!(commands.iter().any(|command| command.program == "feh"));
-        assert!(commands.iter().any(|command| command.program == "xwallpaper"));
+        assert!(commands
+            .iter()
+            .any(|command| command.program == "xwallpaper"));
     }
 }
