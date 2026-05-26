@@ -23,6 +23,7 @@ import {
   ViewName,
   Wallpaper,
 } from "./types";
+import { sourceSelectionSearch } from "./searchFlow";
 import "./App.css";
 
 const navItems: Array<{ id: ViewName; label: string; icon: typeof Home }> = [
@@ -139,12 +140,16 @@ function App() {
     }
   }
 
-  async function searchWallpapers(nextPage = 1, nextQuery = query) {
+  async function searchWallpapers(
+    nextPage = 1,
+    nextQuery = query,
+    nextSource = source,
+  ) {
     const wallpapers = await runWithStatus("search", () =>
       invoke<Wallpaper[]>("search_wallpapers", {
         query: nextQuery,
         page: nextPage,
-        source,
+        source: nextSource,
       }),
     );
     if (!wallpapers) {
@@ -156,6 +161,16 @@ function App() {
       nextPage === 1 ? wallpapers : [...existing, ...wallpapers],
     );
     setActiveView("search");
+  }
+
+  async function changeSource(nextSource: ApiSource) {
+    setSource(nextSource);
+    const request = sourceSelectionSearch(query, nextSource);
+    await searchWallpapers(
+      request.nextPage,
+      request.nextQuery,
+      request.nextSource,
+    );
   }
 
   async function setWallpaper(wallpaper: Wallpaper) {
@@ -269,7 +284,7 @@ function App() {
         onSearch={() => searchWallpapers(1)}
         onSetWallpaper={setWallpaper}
         onSaveFavorite={saveFavorite}
-        onSourceChange={setSource}
+        onSourceChange={changeSource}
       />
     ) : activeView === "library" ? (
       <LibraryPage
