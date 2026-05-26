@@ -7,8 +7,7 @@ export type ApiSource =
   | "wallhaven"
   | "picsum"
   | "deviantArt"
-  | "artStation"
-  | "both";
+  | "artStation";
 export type ResolutionPreference = "auto" | "fullHd" | "fourK";
 export type ThemePreference = "system" | "light" | "dark";
 export type WallpaperLayoutPreference =
@@ -60,6 +59,7 @@ export interface Wallpaper {
   width: number;
   height: number;
   queryUsed?: string | null;
+  mood?: Mood | null;
   localPath?: string | null;
   isFavorite: boolean;
 }

@@ -1,11 +1,26 @@
 use crate::models::{CacheStats, Library, Wallpaper};
+use reqwest::header::CONTENT_TYPE;
 use reqwest::Client;
 use rusqlite::{params, Connection};
+use std::collections::HashMap;
 use std::fs;
 use std::path::{Path, PathBuf};
+use std::sync::{Mutex, OnceLock};
 use std::time::{SystemTime, UNIX_EPOCH};
 
+static DATABASE_INITIALIZATIONS: OnceLock<Mutex<HashMap<PathBuf, usize>>> = OnceLock::new();
+
 pub fn init_database(db_path: &Path) -> Result<(), String> {
+    let key = db_path.to_path_buf();
+    let mut initializations = DATABASE_INITIALIZATIONS
+        .get_or_init(|| Mutex::new(HashMap::new()))
+        .lock()
+        .map_err(|error| format!("Could not lock database initialization registry: {error}"))?;
+
+    if initializations.contains_key(&key) && db_path.exists() {
+        return Ok(());
+    }
+
     if let Some(parent) = db_path.parent() {
         fs::create_dir_all(parent)
             .map_err(|error| format!("Could not create database directory: {error}"))?;
@@ -35,7 +50,22 @@ pub fn init_database(db_path: &Path) -> Result<(), String> {
             "#,
         )
         .map_err(|error| format!("Could not initialize wallpaper database: {error}"))?;
+    *initializations.entry(key).or_insert(0) += 1;
     Ok(())
+}
+
+#[cfg(test)]
+fn database_initialization_count_for_tests(db_path: &Path) -> usize {
+    DATABASE_INITIALIZATIONS
+        .get_or_init(|| Mutex::new(HashMap::new()))
+        .lock()
+        .map(|initializations| {
+            initializations
+                .get(&db_path.to_path_buf())
+                .copied()
+                .unwrap_or_default()
+        })
+        .unwrap_or_default()
 }
 
 pub fn save_favorite(db_path: &Path, wallpaper: &Wallpaper) -> Result<(), String> {
@@ -78,9 +108,9 @@ fn upsert_wallpaper(
             r#"
             INSERT INTO wallpapers (
                 id, source, url_thumb, url_full, photographer, width, height,
-                local_path, query_used, is_favorite, used_count, last_used, created_at
+                local_path, query_used, mood, is_favorite, used_count, last_used, created_at
             )
-            VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13)
+            VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14)
             ON CONFLICT(id) DO UPDATE SET
                 source = excluded.source,
                 url_thumb = excluded.url_thumb,
@@ -90,6 +120,7 @@ fn upsert_wallpaper(
                 height = excluded.height,
                 local_path = COALESCE(excluded.local_path, wallpapers.local_path),
                 query_used = COALESCE(excluded.query_used, wallpapers.query_used),
+                mood = COALESCE(excluded.mood, wallpapers.mood),
                 is_favorite = CASE
                     WHEN wallpapers.is_favorite = 1 OR excluded.is_favorite = 1 THEN 1
                     ELSE 0
@@ -107,6 +138,7 @@ fn upsert_wallpaper(
                 wallpaper.height,
                 local_path,
                 wallpaper.query_used,
+                wallpaper.mood,
                 if favorite { 1_i64 } else { 0_i64 },
                 used_count_delta,
                 last_used,
@@ -145,7 +177,7 @@ fn query_wallpapers(db_path: &Path, clause: &str) -> Result<Vec<Wallpaper>, Stri
     let sql = format!(
         r#"
         SELECT id, source, url_thumb, url_full, photographer, width, height,
-               query_used, local_path, is_favorite
+               query_used, mood, local_path, is_favorite
         FROM wallpapers
         {clause}
         "#
@@ -164,8 +196,9 @@ fn query_wallpapers(db_path: &Path, clause: &str) -> Result<Vec<Wallpaper>, Stri
                 width: row.get(5)?,
                 height: row.get(6)?,
                 query_used: row.get(7)?,
-                local_path: row.get(8)?,
-                is_favorite: row.get::<_, i64>(9)? == 1,
+                mood: row.get(8)?,
+                local_path: row.get(9)?,
+                is_favorite: row.get::<_, i64>(10)? == 1,
             })
         })
         .map_err(|error| format!("Could not query library: {error}"))?;
@@ -182,10 +215,10 @@ pub async fn download_wallpaper(
     let full_dir = cache_dir.join("full");
     fs::create_dir_all(&full_dir)
         .map_err(|error| format!("Could not create wallpaper cache: {error}"))?;
-    let target = full_dir.join(format!("{}.jpg", safe_file_stem(&wallpaper.id)));
+    let stem = safe_file_stem(&wallpaper.id);
 
-    if target.exists() {
-        return Ok(target);
+    if let Some(existing) = existing_cached_download(&full_dir, &stem)? {
+        return Ok(existing);
     }
 
     let response = client
@@ -194,6 +227,11 @@ pub async fn download_wallpaper(
         .await
         .map_err(|error| format!("Could not download wallpaper: {error}"))?;
     let status = response.status();
+    let content_type = response
+        .headers()
+        .get(CONTENT_TYPE)
+        .and_then(|value| value.to_str().ok())
+        .map(str::to_string);
     let bytes = response
         .bytes()
         .await
@@ -202,8 +240,38 @@ pub async fn download_wallpaper(
         return Err(format!("Wallpaper download returned {status}"));
     }
 
+    let extension = extension_from_url(&wallpaper.full_url)
+        .or_else(|| {
+            content_type
+                .as_deref()
+                .and_then(extension_from_content_type)
+        })
+        .unwrap_or("jpg");
+    let target = full_dir.join(format!("{stem}.{extension}"));
     fs::write(&target, bytes).map_err(|error| format!("Could not save wallpaper: {error}"))?;
     Ok(target)
+}
+
+fn existing_cached_download(full_dir: &Path, stem: &str) -> Result<Option<PathBuf>, String> {
+    if !full_dir.exists() {
+        return Ok(None);
+    }
+
+    for entry in fs::read_dir(full_dir)
+        .map_err(|error| format!("Could not read wallpaper cache: {error}"))?
+    {
+        let path = entry
+            .map_err(|error| format!("Could not read cached wallpaper entry: {error}"))?
+            .path();
+        if path
+            .file_stem()
+            .is_some_and(|value| value.to_string_lossy() == stem)
+        {
+            return Ok(Some(path));
+        }
+    }
+
+    Ok(None)
 }
 
 pub fn random_cached_wallpaper(db_path: &Path) -> Result<Option<PathBuf>, String> {
@@ -271,6 +339,103 @@ pub fn clear_cache(cache_dir: &Path, db_path: &Path) -> Result<(), String> {
     Ok(())
 }
 
+pub fn enforce_cache_limit_mb(
+    cache_dir: &Path,
+    db_path: &Path,
+    limit_mb: u64,
+) -> Result<(), String> {
+    enforce_cache_limit_bytes(cache_dir, db_path, limit_mb.saturating_mul(1024 * 1024))
+}
+
+pub fn enforce_cache_limit_bytes(
+    cache_dir: &Path,
+    db_path: &Path,
+    limit_bytes: u64,
+) -> Result<(), String> {
+    if limit_bytes == 0 || !cache_dir.exists() {
+        return Ok(());
+    }
+
+    init_database(db_path)?;
+    let connection = Connection::open(db_path)
+        .map_err(|error| format!("Could not open wallpaper database: {error}"))?;
+    let mut statement = connection
+        .prepare(
+            r#"
+            SELECT id, local_path
+            FROM wallpapers
+            WHERE local_path IS NOT NULL
+            ORDER BY COALESCE(last_used, created_at), created_at
+            "#,
+        )
+        .map_err(|error| format!("Could not prepare cache eviction query: {error}"))?;
+    let candidates = statement
+        .query_map([], |row| {
+            Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+        })
+        .map_err(|error| format!("Could not query cache eviction candidates: {error}"))?
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|error| format!("Could not read cache eviction candidates: {error}"))?;
+
+    for (id, local_path) in candidates {
+        if cache_stats(cache_dir)?.bytes <= limit_bytes {
+            return Ok(());
+        }
+
+        let path = PathBuf::from(local_path);
+        if path.exists() {
+            fs::remove_file(&path)
+                .map_err(|error| format!("Could not evict cached wallpaper: {error}"))?;
+        }
+        connection
+            .execute(
+                "UPDATE wallpapers SET local_path = NULL WHERE id = ?1",
+                params![id],
+            )
+            .map_err(|error| format!("Could not update evicted wallpaper metadata: {error}"))?;
+    }
+
+    for path in cache_files_by_modified_time(cache_dir)? {
+        if cache_stats(cache_dir)?.bytes <= limit_bytes {
+            break;
+        }
+        if path.is_file() {
+            let _ = fs::remove_file(path);
+        }
+    }
+
+    Ok(())
+}
+
+fn cache_files_by_modified_time(cache_dir: &Path) -> Result<Vec<PathBuf>, String> {
+    let mut files = Vec::new();
+    collect_cache_files(cache_dir, &mut files)?;
+    files.sort_by_key(|path| {
+        path.metadata()
+            .and_then(|metadata| metadata.modified())
+            .unwrap_or(UNIX_EPOCH)
+    });
+    Ok(files)
+}
+
+fn collect_cache_files(path: &Path, files: &mut Vec<PathBuf>) -> Result<(), String> {
+    if !path.exists() {
+        return Ok(());
+    }
+
+    for entry in fs::read_dir(path).map_err(|error| format!("Could not read cache: {error}"))? {
+        let path = entry
+            .map_err(|error| format!("Could not read cache entry: {error}"))?
+            .path();
+        if path.is_dir() {
+            collect_cache_files(&path, files)?;
+        } else {
+            files.push(path);
+        }
+    }
+    Ok(())
+}
+
 fn safe_file_stem(value: &str) -> String {
     value
         .chars()
@@ -282,6 +447,32 @@ fn safe_file_stem(value: &str) -> String {
             }
         })
         .collect()
+}
+
+fn extension_from_url(value: &str) -> Option<&'static str> {
+    let path = value.split('?').next().unwrap_or(value);
+    let extension = path.rsplit('.').next()?.to_ascii_lowercase();
+    match extension.as_str() {
+        "jpg" | "jpeg" => Some("jpg"),
+        "png" => Some("png"),
+        "webp" => Some("webp"),
+        _ => None,
+    }
+}
+
+fn extension_from_content_type(value: &str) -> Option<&'static str> {
+    match value
+        .split(';')
+        .next()?
+        .trim()
+        .to_ascii_lowercase()
+        .as_str()
+    {
+        "image/jpeg" => Some("jpg"),
+        "image/png" => Some("png"),
+        "image/webp" => Some("webp"),
+        _ => None,
+    }
 }
 
 fn unix_timestamp_string() -> String {
@@ -316,6 +507,7 @@ mod tests {
             width: 3840,
             height: 2160,
             query_used: Some("forest".into()),
+            mood: Some("nature".into()),
             local_path: None,
             is_favorite: false,
         }
@@ -351,8 +543,66 @@ mod tests {
             library.downloaded[0].local_path.as_deref(),
             Some(local_path.to_string_lossy().as_ref())
         );
+        assert_eq!(library.downloaded[0].mood.as_deref(), Some("nature"));
 
         let _ = std::fs::remove_file(db_path);
+    }
+
+    #[test]
+    fn init_database_tracks_schema_initialization_once_per_path() {
+        let db_path = temp_path("init-once", "sqlite3");
+
+        init_database(&db_path).expect("database should initialize");
+        init_database(&db_path).expect("database should remain initialized");
+
+        assert_eq!(database_initialization_count_for_tests(&db_path), 1);
+
+        let _ = std::fs::remove_file(db_path);
+    }
+
+    #[test]
+    fn enforce_cache_limit_evicts_least_recently_used_downloads() {
+        let db_path = temp_path("evict", "sqlite3");
+        let cache_dir = temp_path("cache-dir", "dir");
+        let full_dir = cache_dir.join("full");
+        std::fs::create_dir_all(&full_dir).expect("cache dir should be created");
+        let old_path = full_dir.join("old.jpg");
+        let new_path = full_dir.join("new.jpg");
+        std::fs::write(&old_path, vec![1_u8; 700_000]).expect("old file should save");
+        std::fs::write(&new_path, vec![2_u8; 700_000]).expect("new file should save");
+
+        let mut old = sample_wallpaper();
+        old.id = "old".into();
+        let mut new = sample_wallpaper();
+        new.id = "new".into();
+        init_database(&db_path).expect("database should initialize");
+        record_wallpaper_used(&db_path, &old, &old_path).expect("old should record");
+        record_wallpaper_used(&db_path, &new, &new_path).expect("new should record");
+        let connection = Connection::open(&db_path).expect("database should open");
+        connection
+            .execute(
+                "UPDATE wallpapers SET last_used = ?1 WHERE id = ?2",
+                params!["1", "old"],
+            )
+            .expect("old timestamp should update");
+        connection
+            .execute(
+                "UPDATE wallpapers SET last_used = ?1 WHERE id = ?2",
+                params!["2", "new"],
+            )
+            .expect("new timestamp should update");
+
+        enforce_cache_limit_bytes(&cache_dir, &db_path, 1_000_000)
+            .expect("cache limit should be enforced");
+        let library = list_library(&db_path).expect("library should list");
+
+        assert!(!old_path.exists());
+        assert!(new_path.exists());
+        assert_eq!(library.downloaded.len(), 1);
+        assert_eq!(library.downloaded[0].id, "new");
+
+        let _ = std::fs::remove_file(db_path);
+        let _ = std::fs::remove_dir_all(cache_dir);
     }
 
     #[test]

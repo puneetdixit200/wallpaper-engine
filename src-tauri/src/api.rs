@@ -1,5 +1,5 @@
 use crate::models::{ApiSource, Wallpaper};
-use crate::settings::ApiKeys;
+use crate::settings::{ApiKeys, ResolutionPreference};
 use reqwest::Client;
 use serde::Deserialize;
 
@@ -127,6 +127,14 @@ struct DeviantArtImage {
 }
 
 pub fn map_pexels_search(raw: &str, query: &str) -> Result<Vec<Wallpaper>, String> {
+    map_pexels_search_with_resolution(raw, query, ResolutionPreference::Auto)
+}
+
+pub fn map_pexels_search_with_resolution(
+    raw: &str,
+    query: &str,
+    resolution: ResolutionPreference,
+) -> Result<Vec<Wallpaper>, String> {
     let parsed = serde_json::from_str::<PexelsSearchResponse>(raw)
         .map_err(|error| format!("Could not parse Pexels response: {error}"))?;
 
@@ -146,26 +154,46 @@ pub fn map_pexels_search(raw: &str, query: &str) -> Result<Vec<Wallpaper>, Strin
             width: photo.width,
             height: photo.height,
             query_used: Some(query.to_string()),
+            mood: None,
             local_path: None,
             is_favorite: false,
         })
-        .filter(is_desktop_wallpaper)
+        .filter(|wallpaper| is_desktop_wallpaper(wallpaper, resolution))
         .collect())
 }
 
 pub fn map_unsplash_search(raw: &str, query: &str) -> Result<Vec<Wallpaper>, String> {
+    map_unsplash_search_with_resolution(raw, query, ResolutionPreference::Auto)
+}
+
+pub fn map_unsplash_search_with_resolution(
+    raw: &str,
+    query: &str,
+    resolution: ResolutionPreference,
+) -> Result<Vec<Wallpaper>, String> {
     let parsed = serde_json::from_str::<UnsplashSearchResponse>(raw)
         .map_err(|error| format!("Could not parse Unsplash response: {error}"))?;
-    Ok(map_unsplash_photos(parsed.results, query))
+    Ok(map_unsplash_photos(parsed.results, query, resolution))
 }
 
 pub fn map_unsplash_random(raw: &str) -> Result<Vec<Wallpaper>, String> {
-    let parsed = serde_json::from_str::<Vec<UnsplashPhoto>>(raw)
-        .map_err(|error| format!("Could not parse Unsplash random response: {error}"))?;
-    Ok(map_unsplash_photos(parsed, "random"))
+    map_unsplash_random_with_resolution(raw, ResolutionPreference::Auto)
 }
 
-fn map_unsplash_photos(photos: Vec<UnsplashPhoto>, query: &str) -> Vec<Wallpaper> {
+pub fn map_unsplash_random_with_resolution(
+    raw: &str,
+    resolution: ResolutionPreference,
+) -> Result<Vec<Wallpaper>, String> {
+    let parsed = serde_json::from_str::<Vec<UnsplashPhoto>>(raw)
+        .map_err(|error| format!("Could not parse Unsplash random response: {error}"))?;
+    Ok(map_unsplash_photos(parsed, "random", resolution))
+}
+
+fn map_unsplash_photos(
+    photos: Vec<UnsplashPhoto>,
+    query: &str,
+    resolution: ResolutionPreference,
+) -> Vec<Wallpaper> {
     photos
         .into_iter()
         .map(|photo| Wallpaper {
@@ -181,14 +209,23 @@ fn map_unsplash_photos(photos: Vec<UnsplashPhoto>, query: &str) -> Vec<Wallpaper
             width: photo.width,
             height: photo.height,
             query_used: Some(query.to_string()),
+            mood: None,
             local_path: None,
             is_favorite: false,
         })
-        .filter(is_desktop_wallpaper)
+        .filter(|wallpaper| is_desktop_wallpaper(wallpaper, resolution))
         .collect()
 }
 
 pub fn map_pixabay_search(raw: &str, query: &str) -> Result<Vec<Wallpaper>, String> {
+    map_pixabay_search_with_resolution(raw, query, ResolutionPreference::Auto)
+}
+
+pub fn map_pixabay_search_with_resolution(
+    raw: &str,
+    query: &str,
+    resolution: ResolutionPreference,
+) -> Result<Vec<Wallpaper>, String> {
     let parsed = serde_json::from_str::<PixabaySearchResponse>(raw)
         .map_err(|error| format!("Could not parse Pixabay response: {error}"))?;
 
@@ -204,14 +241,23 @@ pub fn map_pixabay_search(raw: &str, query: &str) -> Result<Vec<Wallpaper>, Stri
             width: image.image_width,
             height: image.image_height,
             query_used: Some(query.to_string()),
+            mood: None,
             local_path: None,
             is_favorite: false,
         })
-        .filter(is_desktop_wallpaper)
+        .filter(|wallpaper| is_desktop_wallpaper(wallpaper, resolution))
         .collect())
 }
 
 pub fn map_wallhaven_search(raw: &str, query: &str) -> Result<Vec<Wallpaper>, String> {
+    map_wallhaven_search_with_resolution(raw, query, ResolutionPreference::Auto)
+}
+
+pub fn map_wallhaven_search_with_resolution(
+    raw: &str,
+    query: &str,
+    resolution: ResolutionPreference,
+) -> Result<Vec<Wallpaper>, String> {
     let parsed = serde_json::from_str::<WallhavenSearchResponse>(raw)
         .map_err(|error| format!("Could not parse Wallhaven response: {error}"))?;
 
@@ -227,14 +273,23 @@ pub fn map_wallhaven_search(raw: &str, query: &str) -> Result<Vec<Wallpaper>, St
             width: image.dimension_x,
             height: image.dimension_y,
             query_used: Some(query.to_string()),
+            mood: None,
             local_path: None,
             is_favorite: false,
         })
-        .filter(is_desktop_wallpaper)
+        .filter(|wallpaper| is_desktop_wallpaper(wallpaper, resolution))
         .collect())
 }
 
 pub fn map_picsum_list(raw: &str, query: &str) -> Result<Vec<Wallpaper>, String> {
+    map_picsum_list_with_resolution(raw, query, ResolutionPreference::Auto)
+}
+
+pub fn map_picsum_list_with_resolution(
+    raw: &str,
+    query: &str,
+    resolution: ResolutionPreference,
+) -> Result<Vec<Wallpaper>, String> {
     let parsed = serde_json::from_str::<Vec<PicsumImage>>(raw)
         .map_err(|error| format!("Could not parse Picsum response: {error}"))?;
 
@@ -249,14 +304,23 @@ pub fn map_picsum_list(raw: &str, query: &str) -> Result<Vec<Wallpaper>, String>
             width: image.width,
             height: image.height,
             query_used: Some(query.to_string()),
+            mood: None,
             local_path: None,
             is_favorite: false,
         })
-        .filter(is_desktop_wallpaper)
+        .filter(|wallpaper| is_desktop_wallpaper(wallpaper, resolution))
         .collect())
 }
 
 pub fn map_deviantart_tag(raw: &str, query: &str) -> Result<Vec<Wallpaper>, String> {
+    map_deviantart_tag_with_resolution(raw, query, ResolutionPreference::Auto)
+}
+
+pub fn map_deviantart_tag_with_resolution(
+    raw: &str,
+    query: &str,
+    resolution: ResolutionPreference,
+) -> Result<Vec<Wallpaper>, String> {
     let parsed = serde_json::from_str::<DeviantArtTagResponse>(raw)
         .map_err(|error| format!("Could not parse DeviantArt response: {error}"))?;
 
@@ -283,16 +347,21 @@ pub fn map_deviantart_tag(raw: &str, query: &str) -> Result<Vec<Wallpaper>, Stri
                 width: full.width,
                 height: full.height,
                 query_used: Some(query.to_string()),
+                mood: None,
                 local_path: None,
                 is_favorite: false,
             })
         })
-        .filter(is_desktop_wallpaper)
+        .filter(|wallpaper| is_desktop_wallpaper(wallpaper, resolution))
         .collect())
 }
 
-fn is_desktop_wallpaper(wallpaper: &Wallpaper) -> bool {
-    if wallpaper.width < 1280 || wallpaper.height < 720 || wallpaper.width < wallpaper.height {
+fn is_desktop_wallpaper(wallpaper: &Wallpaper, resolution: ResolutionPreference) -> bool {
+    let (minimum_width, minimum_height) = resolution.minimum_dimensions();
+    if wallpaper.width < minimum_width
+        || wallpaper.height < minimum_height
+        || wallpaper.width < wallpaper.height
+    {
         return false;
     }
 
@@ -305,6 +374,7 @@ pub async fn fetch_pexels(
     query: &str,
     page: u32,
     key: &str,
+    resolution: ResolutionPreference,
 ) -> Result<Vec<Wallpaper>, String> {
     let key = key.trim();
     if key.is_empty() {
@@ -334,10 +404,14 @@ pub async fn fetch_pexels(
         return Err(format!("Pexels returned {status}: {body}"));
     }
 
-    map_pexels_search(&body, query)
+    map_pexels_search_with_resolution(&body, query, resolution)
 }
 
-pub async fn fetch_pexels_curated(client: &Client, key: &str) -> Result<Vec<Wallpaper>, String> {
+pub async fn fetch_pexels_curated(
+    client: &Client,
+    key: &str,
+    resolution: ResolutionPreference,
+) -> Result<Vec<Wallpaper>, String> {
     let key = key.trim();
     if key.is_empty() {
         return Err("Pexels API key is missing. Add it in Settings.".into());
@@ -360,7 +434,7 @@ pub async fn fetch_pexels_curated(client: &Client, key: &str) -> Result<Vec<Wall
         return Err(format!("Pexels returned {status}: {body}"));
     }
 
-    map_pexels_search(&body, "curated")
+    map_pexels_search_with_resolution(&body, "curated", resolution)
 }
 
 pub async fn fetch_unsplash(
@@ -368,6 +442,7 @@ pub async fn fetch_unsplash(
     query: &str,
     page: u32,
     key: &str,
+    resolution: ResolutionPreference,
 ) -> Result<Vec<Wallpaper>, String> {
     let key = key.trim();
     if key.is_empty() {
@@ -397,10 +472,14 @@ pub async fn fetch_unsplash(
         return Err(format!("Unsplash returned {status}: {body}"));
     }
 
-    map_unsplash_search(&body, query)
+    map_unsplash_search_with_resolution(&body, query, resolution)
 }
 
-pub async fn fetch_unsplash_random(client: &Client, key: &str) -> Result<Vec<Wallpaper>, String> {
+pub async fn fetch_unsplash_random(
+    client: &Client,
+    key: &str,
+    resolution: ResolutionPreference,
+) -> Result<Vec<Wallpaper>, String> {
     let key = key.trim();
     if key.is_empty() {
         return Err("Unsplash API key is missing. Add it in Settings.".into());
@@ -423,7 +502,7 @@ pub async fn fetch_unsplash_random(client: &Client, key: &str) -> Result<Vec<Wal
         return Err(format!("Unsplash returned {status}: {body}"));
     }
 
-    map_unsplash_random(&body)
+    map_unsplash_random_with_resolution(&body, resolution)
 }
 
 pub async fn fetch_pixabay(
@@ -431,6 +510,7 @@ pub async fn fetch_pixabay(
     query: &str,
     page: u32,
     key: &str,
+    resolution: ResolutionPreference,
 ) -> Result<Vec<Wallpaper>, String> {
     let key = key.trim();
     if key.is_empty() {
@@ -462,7 +542,7 @@ pub async fn fetch_pixabay(
         return Err(format!("Pixabay returned {status}: {body}"));
     }
 
-    map_pixabay_search(&body, query)
+    map_pixabay_search_with_resolution(&body, query, resolution)
 }
 
 pub async fn fetch_wallhaven(
@@ -472,13 +552,14 @@ pub async fn fetch_wallhaven(
     key: &str,
     random: bool,
     allow_nsfw: bool,
+    resolution: ResolutionPreference,
 ) -> Result<Vec<Wallpaper>, String> {
     let page = page.max(1).to_string();
     let purity = wallhaven_purity(allow_nsfw, key)?;
     let mut request = client.get("https://wallhaven.cc/api/v1/search").query(&[
         ("categories", "111"),
         ("purity", purity),
-        ("atleast", "1920x1080"),
+        ("atleast", wallhaven_minimum_size(resolution)),
         ("ratios", "16x9,16x10,21x9,32x9,48x9"),
         ("page", page.as_str()),
         ("sorting", if random { "random" } else { "relevance" }),
@@ -506,13 +587,14 @@ pub async fn fetch_wallhaven(
         return Err(format!("Wallhaven returned {status}: {body}"));
     }
 
-    map_wallhaven_search(
+    map_wallhaven_search_with_resolution(
         &body,
         if query.trim().is_empty() {
             "wallpaper"
         } else {
             query
         },
+        resolution,
     )
 }
 
@@ -528,10 +610,18 @@ pub fn wallhaven_purity(allow_nsfw: bool, key: &str) -> Result<&'static str, Str
     Ok("111")
 }
 
+pub fn wallhaven_minimum_size(resolution: ResolutionPreference) -> &'static str {
+    match resolution {
+        ResolutionPreference::Auto | ResolutionPreference::FullHd => "1920x1080",
+        ResolutionPreference::FourK => "3840x2160",
+    }
+}
+
 pub async fn fetch_picsum(
     client: &Client,
     query: &str,
     page: u32,
+    resolution: ResolutionPreference,
 ) -> Result<Vec<Wallpaper>, String> {
     let page = page.max(1).to_string();
     let response = client
@@ -550,7 +640,7 @@ pub async fn fetch_picsum(
         return Err(format!("Picsum returned {status}: {body}"));
     }
 
-    map_picsum_list(&body, query)
+    map_picsum_list_with_resolution(&body, query, resolution)
 }
 
 pub async fn fetch_deviantart(
@@ -558,22 +648,19 @@ pub async fn fetch_deviantart(
     query: &str,
     page: u32,
     token: &str,
+    resolution: ResolutionPreference,
 ) -> Result<Vec<Wallpaper>, String> {
     let token = token.trim();
     if token.is_empty() {
         return Err("DeviantArt access token is missing. Add it in Settings.".into());
     }
 
-    let tag = query
-        .split_whitespace()
-        .next()
-        .filter(|value| !value.is_empty())
-        .unwrap_or("wallpaper");
+    let tag = deviantart_tag(query);
     let offset = ((page.max(1) - 1) * 20).to_string();
     let response = client
         .get("https://www.deviantart.com/api/v1/oauth2/browse/tags")
         .query(&[
-            ("tag", tag),
+            ("tag", tag.as_str()),
             ("limit", "20"),
             ("offset", offset.as_str()),
             ("mature_content", "false"),
@@ -592,7 +679,16 @@ pub async fn fetch_deviantart(
         return Err(format!("DeviantArt returned {status}: {body}"));
     }
 
-    map_deviantart_tag(&body, query)
+    map_deviantart_tag_with_resolution(&body, query, resolution)
+}
+
+pub fn deviantart_tag(query: &str) -> String {
+    let tag = query.trim();
+    if tag.is_empty() {
+        "wallpaper".into()
+    } else {
+        tag.into()
+    }
 }
 
 pub fn fetch_artstation_unsupported() -> Result<Vec<Wallpaper>, String> {
@@ -606,6 +702,7 @@ pub async fn search_wallpapers(
     source: ApiSource,
     keys: &ApiKeys,
     allow_nsfw_wallhaven: bool,
+    resolution: ResolutionPreference,
 ) -> Result<Vec<Wallpaper>, String> {
     let query = query.trim();
     if query.is_empty() {
@@ -613,9 +710,11 @@ pub async fn search_wallpapers(
     }
 
     match source {
-        ApiSource::Pexels => fetch_pexels(client, query, page, &keys.pexels).await,
-        ApiSource::Unsplash => fetch_unsplash(client, query, page, &keys.unsplash).await,
-        ApiSource::Pixabay => fetch_pixabay(client, query, page, &keys.pixabay).await,
+        ApiSource::Pexels => fetch_pexels(client, query, page, &keys.pexels, resolution).await,
+        ApiSource::Unsplash => {
+            fetch_unsplash(client, query, page, &keys.unsplash, resolution).await
+        }
+        ApiSource::Pixabay => fetch_pixabay(client, query, page, &keys.pixabay, resolution).await,
         ApiSource::Wallhaven => {
             fetch_wallhaven(
                 client,
@@ -624,48 +723,74 @@ pub async fn search_wallpapers(
                 &keys.wallhaven,
                 false,
                 allow_nsfw_wallhaven,
+                resolution,
             )
             .await
         }
-        ApiSource::Picsum => fetch_picsum(client, query, page).await,
-        ApiSource::DeviantArt => fetch_deviantart(client, query, page, &keys.deviantart).await,
+        ApiSource::Picsum => fetch_picsum(client, query, page, resolution).await,
+        ApiSource::DeviantArt => {
+            fetch_deviantart(client, query, page, &keys.deviantart, resolution).await
+        }
         ApiSource::ArtStation => fetch_artstation_unsupported(),
         ApiSource::All => {
-            let mut results = Vec::new();
-            if !keys.pexels.trim().is_empty() {
-                results.push(fetch_pexels(client, query, page, &keys.pexels).await);
-            }
-            if !keys.unsplash.trim().is_empty() {
-                results.push(fetch_unsplash(client, query, page, &keys.unsplash).await);
-            }
-            if !keys.pixabay.trim().is_empty() {
-                results.push(fetch_pixabay(client, query, page, &keys.pixabay).await);
-            }
-            results.push(
-                fetch_wallhaven(
-                    client,
-                    query,
-                    page,
-                    &keys.wallhaven,
-                    false,
-                    allow_nsfw_wallhaven,
-                )
-                .await,
+            let has_pexels = !keys.pexels.trim().is_empty();
+            let has_unsplash = !keys.unsplash.trim().is_empty();
+            let has_pixabay = !keys.pixabay.trim().is_empty();
+            let has_deviantart = !keys.deviantart.trim().is_empty();
+            let pexels = async {
+                if has_pexels {
+                    fetch_pexels(client, query, page, &keys.pexels, resolution).await
+                } else {
+                    Err(String::new())
+                }
+            };
+            let unsplash = async {
+                if has_unsplash {
+                    fetch_unsplash(client, query, page, &keys.unsplash, resolution).await
+                } else {
+                    Err(String::new())
+                }
+            };
+            let pixabay = async {
+                if has_pixabay {
+                    fetch_pixabay(client, query, page, &keys.pixabay, resolution).await
+                } else {
+                    Err(String::new())
+                }
+            };
+            let wallhaven = fetch_wallhaven(
+                client,
+                query,
+                page,
+                &keys.wallhaven,
+                false,
+                allow_nsfw_wallhaven,
+                resolution,
             );
-            results.push(fetch_picsum(client, query, page).await);
-            if !keys.deviantart.trim().is_empty() {
-                results.push(fetch_deviantart(client, query, page, &keys.deviantart).await);
+            let picsum = fetch_picsum(client, query, page, resolution);
+            let deviantart = async {
+                if has_deviantart {
+                    fetch_deviantart(client, query, page, &keys.deviantart, resolution).await
+                } else {
+                    Err(String::new())
+                }
+            };
+            let (pexels, unsplash, pixabay, wallhaven, picsum, deviantart) =
+                tokio::join!(pexels, unsplash, pixabay, wallhaven, picsum, deviantart);
+            let mut results = vec![wallhaven, picsum];
+            if has_pexels {
+                results.push(pexels);
+            }
+            if has_unsplash {
+                results.push(unsplash);
+            }
+            if has_pixabay {
+                results.push(pixabay);
+            }
+            if has_deviantart {
+                results.push(deviantart);
             }
             merge_results(results)
-        }
-        ApiSource::Both => {
-            fetch_from_both(
-                fetch_pexels(client, query, page, &keys.pexels),
-                fetch_unsplash(client, query, page, &keys.unsplash),
-                !keys.pexels.trim().is_empty(),
-                !keys.unsplash.trim().is_empty(),
-            )
-            .await
         }
     }
 }
@@ -675,67 +800,91 @@ pub async fn random_wallpapers(
     source: ApiSource,
     keys: &ApiKeys,
     allow_nsfw_wallhaven: bool,
+    resolution: ResolutionPreference,
 ) -> Result<Vec<Wallpaper>, String> {
     match source {
-        ApiSource::Pexels => fetch_pexels_curated(client, &keys.pexels).await,
-        ApiSource::Unsplash => fetch_unsplash_random(client, &keys.unsplash).await,
-        ApiSource::Pixabay => fetch_pixabay(client, "wallpaper", 1, &keys.pixabay).await,
+        ApiSource::Pexels => fetch_pexels_curated(client, &keys.pexels, resolution).await,
+        ApiSource::Unsplash => fetch_unsplash_random(client, &keys.unsplash, resolution).await,
+        ApiSource::Pixabay => {
+            fetch_pixabay(client, "wallpaper", 1, &keys.pixabay, resolution).await
+        }
         ApiSource::Wallhaven => {
-            fetch_wallhaven(client, "", 1, &keys.wallhaven, true, allow_nsfw_wallhaven).await
-        }
-        ApiSource::Picsum => fetch_picsum(client, "random", 1).await,
-        ApiSource::DeviantArt => fetch_deviantart(client, "wallpaper", 1, &keys.deviantart).await,
-        ApiSource::ArtStation => fetch_artstation_unsupported(),
-        ApiSource::All => {
-            let mut results = Vec::new();
-            if !keys.pexels.trim().is_empty() {
-                results.push(fetch_pexels_curated(client, &keys.pexels).await);
-            }
-            if !keys.unsplash.trim().is_empty() {
-                results.push(fetch_unsplash_random(client, &keys.unsplash).await);
-            }
-            if !keys.pixabay.trim().is_empty() {
-                results.push(fetch_pixabay(client, "wallpaper", 1, &keys.pixabay).await);
-            }
-            results.push(
-                fetch_wallhaven(client, "", 1, &keys.wallhaven, true, allow_nsfw_wallhaven).await,
-            );
-            results.push(fetch_picsum(client, "random", 1).await);
-            if !keys.deviantart.trim().is_empty() {
-                results.push(fetch_deviantart(client, "wallpaper", 1, &keys.deviantart).await);
-            }
-            merge_results(results)
-        }
-        ApiSource::Both => {
-            fetch_from_both(
-                fetch_pexels_curated(client, &keys.pexels),
-                fetch_unsplash_random(client, &keys.unsplash),
-                !keys.pexels.trim().is_empty(),
-                !keys.unsplash.trim().is_empty(),
+            fetch_wallhaven(
+                client,
+                "",
+                1,
+                &keys.wallhaven,
+                true,
+                allow_nsfw_wallhaven,
+                resolution,
             )
             .await
         }
-    }
-}
-
-async fn fetch_from_both<P, U>(
-    pexels_future: P,
-    unsplash_future: U,
-    has_pexels_key: bool,
-    has_unsplash_key: bool,
-) -> Result<Vec<Wallpaper>, String>
-where
-    P: std::future::Future<Output = Result<Vec<Wallpaper>, String>>,
-    U: std::future::Future<Output = Result<Vec<Wallpaper>, String>>,
-{
-    match (has_pexels_key, has_unsplash_key) {
-        (true, true) => {
-            let (pexels, unsplash) = tokio::join!(pexels_future, unsplash_future);
-            merge_results(vec![pexels, unsplash])
+        ApiSource::Picsum => fetch_picsum(client, "random", 1, resolution).await,
+        ApiSource::DeviantArt => {
+            fetch_deviantart(client, "wallpaper", 1, &keys.deviantart, resolution).await
         }
-        (true, false) => pexels_future.await,
-        (false, true) => unsplash_future.await,
-        (false, false) => Err("Add a Pexels or Unsplash API key in Settings.".into()),
+        ApiSource::ArtStation => fetch_artstation_unsupported(),
+        ApiSource::All => {
+            let has_pexels = !keys.pexels.trim().is_empty();
+            let has_unsplash = !keys.unsplash.trim().is_empty();
+            let has_pixabay = !keys.pixabay.trim().is_empty();
+            let has_deviantart = !keys.deviantart.trim().is_empty();
+            let pexels = async {
+                if has_pexels {
+                    fetch_pexels_curated(client, &keys.pexels, resolution).await
+                } else {
+                    Err(String::new())
+                }
+            };
+            let unsplash = async {
+                if has_unsplash {
+                    fetch_unsplash_random(client, &keys.unsplash, resolution).await
+                } else {
+                    Err(String::new())
+                }
+            };
+            let pixabay = async {
+                if has_pixabay {
+                    fetch_pixabay(client, "wallpaper", 1, &keys.pixabay, resolution).await
+                } else {
+                    Err(String::new())
+                }
+            };
+            let wallhaven = fetch_wallhaven(
+                client,
+                "",
+                1,
+                &keys.wallhaven,
+                true,
+                allow_nsfw_wallhaven,
+                resolution,
+            );
+            let picsum = fetch_picsum(client, "random", 1, resolution);
+            let deviantart = async {
+                if has_deviantart {
+                    fetch_deviantart(client, "wallpaper", 1, &keys.deviantart, resolution).await
+                } else {
+                    Err(String::new())
+                }
+            };
+            let (pexels, unsplash, pixabay, wallhaven, picsum, deviantart) =
+                tokio::join!(pexels, unsplash, pixabay, wallhaven, picsum, deviantart);
+            let mut results = vec![wallhaven, picsum];
+            if has_pexels {
+                results.push(pexels);
+            }
+            if has_unsplash {
+                results.push(unsplash);
+            }
+            if has_pixabay {
+                results.push(pixabay);
+            }
+            if has_deviantart {
+                results.push(deviantart);
+            }
+            merge_results(results)
+        }
     }
 }
 
@@ -895,6 +1044,40 @@ mod tests {
     }
 
     #[test]
+    fn four_k_resolution_filters_out_full_hd_provider_results() {
+        let raw = r#"{
+          "hits": [
+            {
+              "id": 1,
+              "webformatURL": "https://pixabay.com/fullhd-thumb.jpg",
+              "largeImageURL": "https://pixabay.com/fullhd-large.jpg",
+              "imageWidth": 1920,
+              "imageHeight": 1080,
+              "user": "Full HD"
+            },
+            {
+              "id": 2,
+              "webformatURL": "https://pixabay.com/4k-thumb.jpg",
+              "largeImageURL": "https://pixabay.com/4k-large.jpg",
+              "imageWidth": 3840,
+              "imageHeight": 2160,
+              "user": "4K"
+            }
+          ]
+        }"#;
+
+        let wallpapers = map_pixabay_search_with_resolution(
+            raw,
+            "wallpaper",
+            crate::settings::ResolutionPreference::FourK,
+        )
+        .expect("pixabay response should map");
+
+        assert_eq!(wallpapers.len(), 1);
+        assert_eq!(wallpapers[0].id, "pixabay-2");
+    }
+
+    #[test]
     fn maps_wallhaven_search_response_to_wallpaper_model() {
         let raw = r#"{
           "data": [
@@ -943,6 +1126,24 @@ mod tests {
             wallhaven_purity(true, "wallhaven-key").expect("key should allow nsfw"),
             "111"
         );
+    }
+
+    #[test]
+    fn wallhaven_atleast_tracks_resolution_preference() {
+        assert_eq!(
+            wallhaven_minimum_size(crate::settings::ResolutionPreference::Auto),
+            "1920x1080"
+        );
+        assert_eq!(
+            wallhaven_minimum_size(crate::settings::ResolutionPreference::FourK),
+            "3840x2160"
+        );
+    }
+
+    #[test]
+    fn deviantart_tag_keeps_multi_word_queries() {
+        assert_eq!(deviantart_tag("anime city night"), "anime city night");
+        assert_eq!(deviantart_tag("   "), "wallpaper");
     }
 
     #[test]

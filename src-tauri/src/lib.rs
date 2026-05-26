@@ -59,6 +59,7 @@ async fn search_wallpapers(
         source,
         &settings.api_keys,
         settings.allow_nsfw_wallhaven,
+        settings.resolution,
     )
     .await
 }
@@ -75,6 +76,7 @@ async fn random_wallpapers(
         source,
         &settings.api_keys,
         settings.allow_nsfw_wallhaven,
+        settings.resolution,
     )
     .await
 }
@@ -92,6 +94,8 @@ async fn set_wallpaper(
         &state.db_path,
         wallpaper,
         settings.wallpaper_layout,
+        settings.resolution,
+        settings.cache_limit_mb,
     )
     .await?;
     remember_locked_wallpaper(&state.wallpaper_lock, &wallpaper, settings.wallpaper_layout).await;
@@ -146,11 +150,14 @@ async fn set_wallpaper_inner(
     db_path: &PathBuf,
     mut wallpaper: Wallpaper,
     layout: WallpaperLayoutPreference,
+    resolution: settings::ResolutionPreference,
+    cache_limit_mb: u64,
 ) -> Result<Wallpaper, String> {
     let local_path = cache::download_wallpaper(client, cache_dir, &wallpaper).await?;
-    let screen_path = wallpaper::prepare_wallpaper_for_screen(&local_path, cache_dir);
+    let screen_path = wallpaper::prepare_wallpaper_for_screen(&local_path, cache_dir, resolution);
     wallpaper::set_desktop_wallpaper(&screen_path, layout)?;
     cache::record_wallpaper_used(db_path, &wallpaper, &screen_path)?;
+    cache::enforce_cache_limit_mb(cache_dir, db_path, cache_limit_mb)?;
     wallpaper.local_path = Some(screen_path.to_string_lossy().to_string());
     Ok(wallpaper)
 }
@@ -168,6 +175,7 @@ async fn apply_random_wallpaper_inner(
         ApiSource::All,
         &settings.api_keys,
         settings.allow_nsfw_wallhaven,
+        settings.resolution,
     )
     .await
     {
@@ -182,12 +190,15 @@ async fn apply_random_wallpaper_inner(
                 &db_path,
                 wallpaper,
                 settings.wallpaper_layout,
+                settings.resolution,
+                settings.cache_limit_mb,
             )
             .await
         }
         Err(error) => {
             if let Some(path) = cache::random_cached_wallpaper(&db_path)? {
-                let screen_path = wallpaper::prepare_wallpaper_for_screen(&path, &cache_dir);
+                let screen_path =
+                    wallpaper::prepare_wallpaper_for_screen(&path, &cache_dir, settings.resolution);
                 wallpaper::set_desktop_wallpaper(&screen_path, settings.wallpaper_layout)?;
                 Ok(Wallpaper {
                     id: screen_path
@@ -201,6 +212,7 @@ async fn apply_random_wallpaper_inner(
                     width: 0,
                     height: 0,
                     query_used: Some("cache".into()),
+                    mood: None,
                     local_path: Some(screen_path.to_string_lossy().to_string()),
                     is_favorite: false,
                 })
@@ -232,7 +244,11 @@ async fn restart_scheduler(
     let interval = std::time::Duration::from_secs(interval_minutes * 60);
 
     *scheduler = Some(tauri::async_runtime::spawn(async move {
-        let mut timer = tokio::time::interval(interval);
+        let first_tick = tokio::time::Instant::from_std(scheduler_first_tick_at(
+            std::time::Instant::now(),
+            interval,
+        ));
+        let mut timer = tokio::time::interval_at(first_tick, interval);
         loop {
             timer.tick().await;
             if let Ok(wallpaper) = apply_random_wallpaper_inner(
@@ -256,6 +272,13 @@ async fn restart_scheduler(
     }));
 
     Ok(())
+}
+
+fn scheduler_first_tick_at(
+    now: std::time::Instant,
+    interval: std::time::Duration,
+) -> std::time::Instant {
+    now + interval
 }
 
 async fn remember_locked_wallpaper(
@@ -349,7 +372,9 @@ pub fn run() {
 
 #[cfg(test)]
 mod config_tests {
+    use super::*;
     use serde_json::Value;
+    use std::time::{Duration, Instant};
 
     #[test]
     fn asset_protocol_allows_cached_wallpaper_previews() {
@@ -374,5 +399,27 @@ mod config_tests {
                 .any(|entry| entry.as_str() == Some("$APPCACHE/wallpapers/**")),
             "asset protocol scope allows cached wallpapers"
         );
+    }
+
+    #[test]
+    fn content_security_policy_is_restrictive_and_allows_wallpaper_images() {
+        let config: Value =
+            serde_json::from_str(include_str!("../tauri.conf.json")).expect("config is valid JSON");
+        let csp = config
+            .pointer("/app/security/csp")
+            .and_then(Value::as_str)
+            .expect("content security policy is configured");
+
+        assert!(csp.contains("default-src 'self'"));
+        assert!(csp.contains("img-src 'self' asset: http://asset.localhost https: data:"));
+        assert!(csp.contains("script-src 'self'"));
+    }
+
+    #[test]
+    fn scheduler_first_tick_is_delayed_by_full_interval() {
+        let now = Instant::now();
+        let interval = Duration::from_secs(15 * 60);
+
+        assert_eq!(scheduler_first_tick_at(now, interval), now + interval);
     }
 }

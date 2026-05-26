@@ -1,21 +1,10 @@
+import { useAppState } from "../appState";
+import { runConfirmed } from "../confirmAction";
+import { EmptyState } from "../components/EmptyState";
 import { WallCard } from "../components/WallCard";
-import { Library, Wallpaper } from "../types";
 
-interface LibraryPageProps {
-  busy: string | null;
-  library: Library;
-  onClearLibrary: () => void;
-  onSetWallpaper: (wallpaper: Wallpaper) => void;
-  onSaveFavorite: (wallpaper: Wallpaper) => void;
-}
-
-export function LibraryPage({
-  busy,
-  library,
-  onClearLibrary,
-  onSetWallpaper,
-  onSaveFavorite,
-}: LibraryPageProps) {
+export function LibraryPage() {
+  const { busy, library, actions } = useAppState();
   const hasLibraryItems =
     library.favorites.length > 0 || library.downloaded.length > 0;
 
@@ -29,7 +18,13 @@ export function LibraryPage({
         <button
           className="secondary-button"
           disabled={!hasLibraryItems || busy === "clear-library"}
-          onClick={onClearLibrary}
+          onClick={() =>
+            void runConfirmed(
+              (message) => window.confirm(message),
+              "Clear all saved and downloaded wallpaper metadata?",
+              actions.clearLibrary,
+            )
+          }
           type="button"
         >
           Clear library
@@ -42,14 +37,14 @@ export function LibraryPage({
           <span>{library.favorites.length}</span>
         </div>
         <div className="wall-grid">
-          {library.favorites.map((wallpaper) => (
-            <WallCard
-              busy={busy}
-              key={wallpaper.id}
-              onSaveFavorite={onSaveFavorite}
-              onSetWallpaper={onSetWallpaper}
-              wallpaper={wallpaper}
+          {library.favorites.length === 0 ? (
+            <EmptyState
+              title="No favorites yet"
+              detail="Saved wallpapers will appear here."
             />
+          ) : null}
+          {library.favorites.map((wallpaper) => (
+            <WallCard key={wallpaper.id} wallpaper={wallpaper} />
           ))}
         </div>
       </section>
@@ -60,14 +55,14 @@ export function LibraryPage({
           <span>{library.downloaded.length}</span>
         </div>
         <div className="wall-grid">
-          {library.downloaded.map((wallpaper) => (
-            <WallCard
-              busy={busy}
-              key={wallpaper.id}
-              onSaveFavorite={onSaveFavorite}
-              onSetWallpaper={onSetWallpaper}
-              wallpaper={wallpaper}
+          {library.downloaded.length === 0 ? (
+            <EmptyState
+              title="No downloads yet"
+              detail="Cached wallpapers will appear here."
             />
+          ) : null}
+          {library.downloaded.map((wallpaper) => (
+            <WallCard key={wallpaper.id} wallpaper={wallpaper} />
           ))}
         </div>
       </section>

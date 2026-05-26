@@ -1,36 +1,23 @@
 import { convertFileSrc } from "@tauri-apps/api/core";
 import { Heart, Shuffle, SkipForward } from "lucide-react";
+import { useAppState } from "../appState";
+import { FallbackImage } from "../components/FallbackImage";
 import { MoodBar } from "../components/MoodBar";
-import { Mood, trendingTopics, Wallpaper } from "../types";
+import { trendingTopics } from "../types";
 
-interface HomePageProps {
-  busy: string | null;
-  currentWallpaper: Wallpaper | null;
-  mood: Mood;
-  notice: string;
-  providerState: string;
-  onMoodSelect: (mood: Mood) => void;
-  onNext: () => void;
-  onRandom: () => void;
-  onSaveCurrent: () => void | Promise<void> | undefined;
-  onTopicSelect: (query: string) => void | Promise<void>;
-}
-
-export function HomePage({
-  busy,
-  currentWallpaper,
-  mood,
-  notice,
-  providerState,
-  onMoodSelect,
-  onNext,
-  onRandom,
-  onSaveCurrent,
-  onTopicSelect,
-}: HomePageProps) {
+export function HomePage() {
+  const {
+    busy,
+    currentWallpaper,
+    hasAnyKey,
+    mood,
+    notice,
+    actions,
+  } = useAppState();
   const preview = currentWallpaper?.localPath
     ? convertFileSrc(currentWallpaper.localPath)
     : currentWallpaper?.fullUrl || currentWallpaper?.thumbUrl || "";
+  const providerState = hasAnyKey ? "API keys saved" : "Free sources ready";
 
   return (
     <div className="view-stack">
@@ -45,13 +32,15 @@ export function HomePage({
       </header>
 
       <section className="preview-panel">
-        {preview ? (
-          <img alt="Current wallpaper preview" src={preview} />
-        ) : (
+        <FallbackImage
+          alt="Current wallpaper preview"
+          fallback={
           <div className="preview-empty">
             <span>Wallpaper preview</span>
           </div>
-        )}
+          }
+          src={preview}
+        />
         <div className="preview-overlay">
           <div>
             <strong>{currentWallpaper?.source || "No wallpaper applied yet"}</strong>
@@ -61,7 +50,7 @@ export function HomePage({
             <button
               className="primary-button"
               disabled={busy === "random"}
-              onClick={onRandom}
+              onClick={actions.applyRandomWallpaper}
               type="button"
             >
               <Shuffle size={17} aria-hidden="true" />
@@ -70,7 +59,7 @@ export function HomePage({
             <button
               className="secondary-button"
               disabled={busy === "next"}
-              onClick={onNext}
+              onClick={actions.applyNextFromMood}
               type="button"
             >
               <SkipForward size={17} aria-hidden="true" />
@@ -79,7 +68,11 @@ export function HomePage({
             <button
               className="secondary-button"
               disabled={!currentWallpaper}
-              onClick={onSaveCurrent}
+              onClick={() =>
+                currentWallpaper
+                  ? void actions.saveFavorite(currentWallpaper)
+                  : undefined
+              }
               type="button"
             >
               <Heart size={17} aria-hidden="true" />
@@ -94,7 +87,7 @@ export function HomePage({
           <h3>Moods</h3>
           <span>{mood}</span>
         </div>
-        <MoodBar activeMood={mood} onMoodSelect={onMoodSelect} />
+        <MoodBar activeMood={mood} onMoodSelect={actions.applyMood} />
       </section>
 
       <section className="section-band">
@@ -107,7 +100,7 @@ export function HomePage({
             <button
               className="topic-chip"
               key={topic.query}
-              onClick={() => onTopicSelect(topic.query)}
+              onClick={() => actions.applyTopic(topic.query)}
               type="button"
             >
               {topic.label}

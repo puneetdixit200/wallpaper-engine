@@ -1,20 +1,13 @@
 import { FormEvent, useEffect, useState } from "react";
+import { useAppState } from "../appState";
+import { runConfirmed } from "../confirmAction";
 import {
-  CacheStats,
   AppSettings,
   ResolutionPreference,
   ThemePreference,
   WallpaperLayoutPreference,
 } from "../types";
-import { parseAutoChangeMinutes } from "../settingsFlow";
-
-interface SettingsPageProps {
-  busy: string | null;
-  cacheStats: CacheStats;
-  settings: AppSettings;
-  onClearCache: () => void;
-  onSave: (settings: AppSettings) => void;
-}
+import { parseAutoChangeMinutes, parseCacheLimitMb } from "../settingsFlow";
 
 const resolutions: Array<{ label: string; value: ResolutionPreference }> = [
   { label: "Auto", value: "auto" },
@@ -40,13 +33,8 @@ const wallpaperLayouts: Array<{
   { label: "Span", value: "span" },
 ];
 
-export function SettingsPage({
-  busy,
-  cacheStats,
-  settings,
-  onClearCache,
-  onSave,
-}: SettingsPageProps) {
+export function SettingsPage() {
+  const { busy, cacheStats, settings, actions } = useAppState();
   const [draft, setDraft] = useState(settings);
 
   useEffect(() => {
@@ -59,7 +47,7 @@ export function SettingsPage({
 
   function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    onSave(draft);
+    void actions.saveSettings(draft);
   }
 
   function updateApiKey(key: keyof AppSettings["apiKeys"], value: string) {
@@ -218,7 +206,9 @@ export function SettingsPage({
               min={128}
               max={10240}
               onChange={(event) =>
-                updateDraft({ cacheLimitMb: Number(event.currentTarget.value) })
+                updateDraft({
+                  cacheLimitMb: parseCacheLimitMb(event.currentTarget.value),
+                })
               }
               step={128}
               type="number"
@@ -245,7 +235,13 @@ export function SettingsPage({
           <button
             className="secondary-button"
             disabled={busy === "clear-cache"}
-            onClick={onClearCache}
+            onClick={() =>
+              void runConfirmed(
+                (message) => window.confirm(message),
+                "Clear every cached wallpaper file?",
+                actions.clearWallpaperCache,
+              )
+            }
             type="button"
           >
             Clear cache

@@ -1,4 +1,4 @@
-use crate::settings::WallpaperLayoutPreference;
+use crate::settings::{ResolutionPreference, WallpaperLayoutPreference};
 use image::{imageops::FilterType, GenericImageView, ImageFormat, ImageReader};
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -85,13 +85,52 @@ pub fn current_desktop_wallpaper() -> Result<Option<PathBuf>, String> {
     }
 }
 
-#[cfg(not(target_os = "windows"))]
+#[cfg(target_os = "macos")]
+pub fn current_desktop_wallpaper() -> Result<Option<PathBuf>, String> {
+    let output = Command::new("osascript")
+        .arg("-e")
+        .arg("tell application \"System Events\" to get POSIX path of (picture of desktop 1 as alias)")
+        .output()
+        .map_err(|error| format!("osascript failed: {error}"))?;
+    if !output.status.success() {
+        return Err(format!("osascript exited with {}", output.status));
+    }
+
+    Ok(parse_current_wallpaper_output(&String::from_utf8_lossy(
+        &output.stdout,
+    )))
+}
+
+#[cfg(target_os = "linux")]
+pub fn current_desktop_wallpaper() -> Result<Option<PathBuf>, String> {
+    let output = Command::new("gsettings")
+        .args(["get", "org.gnome.desktop.background", "picture-uri"])
+        .output()
+        .map_err(|error| format!("gsettings failed: {error}"))?;
+    if !output.status.success() {
+        return Ok(None);
+    }
+
+    let raw = String::from_utf8_lossy(&output.stdout);
+    Ok(parse_current_wallpaper_output(
+        raw.trim()
+            .trim_matches('\'')
+            .strip_prefix("file://")
+            .unwrap_or(raw.trim()),
+    ))
+}
+
+#[cfg(not(any(target_os = "windows", target_os = "macos", target_os = "linux")))]
 pub fn current_desktop_wallpaper() -> Result<Option<PathBuf>, String> {
     Ok(None)
 }
 
-pub fn prepare_wallpaper_for_screen(path: &Path, cache_dir: &Path) -> PathBuf {
-    let Some(screen_size) = current_screen_size() else {
+pub fn prepare_wallpaper_for_screen(
+    path: &Path,
+    cache_dir: &Path,
+    resolution: ResolutionPreference,
+) -> PathBuf {
+    let Some(screen_size) = screen_size_or_resolution(current_screen_size(), resolution) else {
         return path.to_path_buf();
     };
 
@@ -104,10 +143,12 @@ pub fn resize_wallpaper_for_screen(
     output_dir: &Path,
     screen_size: (u32, u32),
 ) -> Result<PathBuf, String> {
-    let image = ImageReader::open(path)
+    let reader = ImageReader::open(path)
         .map_err(|error| format!("Could not open wallpaper for screen sizing: {error}"))?
         .with_guessed_format()
-        .map_err(|error| format!("Could not read wallpaper format: {error}"))?
+        .map_err(|error| format!("Could not read wallpaper format: {error}"))?;
+    let source_format = screen_cache_format(path, reader.format());
+    let image = reader
         .decode()
         .map_err(|error| format!("Could not decode wallpaper for screen sizing: {error}"))?;
     let Some((next_width, next_height)) =
@@ -119,7 +160,7 @@ pub fn resize_wallpaper_for_screen(
     fs::create_dir_all(output_dir)
         .map_err(|error| format!("Could not create screen-sized wallpaper cache: {error}"))?;
     let target = output_dir.join(format!(
-        "{}-{}x{}.jpg",
+        "{}-{}x{}.{}",
         safe_file_stem(
             path.file_stem()
                 .map(|stem| stem.to_string_lossy())
@@ -127,20 +168,77 @@ pub fn resize_wallpaper_for_screen(
                 .as_ref()
         ),
         next_width,
-        next_height
+        next_height,
+        source_format.extension
     ));
     if target.exists() {
         return Ok(target);
     }
 
-    let resized = image
-        .resize_exact(next_width, next_height, FilterType::Lanczos3)
-        .to_rgb8();
-    image::DynamicImage::ImageRgb8(resized)
-        .save_with_format(&target, ImageFormat::Jpeg)
+    let resized = image.resize_exact(next_width, next_height, FilterType::Lanczos3);
+    let output = if source_format.format == ImageFormat::Jpeg {
+        image::DynamicImage::ImageRgb8(resized.to_rgb8())
+    } else {
+        resized
+    };
+    output
+        .save_with_format(&target, source_format.format)
         .map_err(|error| format!("Could not save screen-sized wallpaper: {error}"))?;
 
     Ok(target)
+}
+
+#[derive(Clone, Copy)]
+struct ScreenCacheFormat {
+    extension: &'static str,
+    format: ImageFormat,
+}
+
+fn screen_cache_format(path: &Path, guessed_format: Option<ImageFormat>) -> ScreenCacheFormat {
+    guessed_format
+        .and_then(screen_cache_format_from_image_format)
+        .or_else(|| screen_cache_format_from_extension(path))
+        .unwrap_or(ScreenCacheFormat {
+            extension: "jpg",
+            format: ImageFormat::Jpeg,
+        })
+}
+
+fn screen_cache_format_from_image_format(format: ImageFormat) -> Option<ScreenCacheFormat> {
+    match format {
+        ImageFormat::Jpeg => Some(ScreenCacheFormat {
+            extension: "jpg",
+            format,
+        }),
+        ImageFormat::Png => Some(ScreenCacheFormat {
+            extension: "png",
+            format,
+        }),
+        ImageFormat::WebP => Some(ScreenCacheFormat {
+            extension: "webp",
+            format,
+        }),
+        _ => None,
+    }
+}
+
+fn screen_cache_format_from_extension(path: &Path) -> Option<ScreenCacheFormat> {
+    let extension = path.extension()?.to_string_lossy().to_ascii_lowercase();
+    match extension.as_str() {
+        "jpg" | "jpeg" => Some(ScreenCacheFormat {
+            extension: "jpg",
+            format: ImageFormat::Jpeg,
+        }),
+        "png" => Some(ScreenCacheFormat {
+            extension: "png",
+            format: ImageFormat::Png,
+        }),
+        "webp" => Some(ScreenCacheFormat {
+            extension: "webp",
+            format: ImageFormat::WebP,
+        }),
+        _ => None,
+    }
 }
 
 #[cfg(target_os = "windows")]
@@ -174,10 +272,11 @@ fn set_platform_wallpaper(path: &Path, layout: WallpaperLayoutPreference) -> Res
 }
 
 #[cfg(target_os = "macos")]
-fn set_platform_wallpaper(path: &Path, _layout: WallpaperLayoutPreference) -> Result<(), String> {
+fn set_platform_wallpaper(path: &Path, layout: WallpaperLayoutPreference) -> Result<(), String> {
     let script = format!(
-        "tell application \"System Events\" to set picture of every desktop to \"{}\"",
-        escape_osascript_path(path)
+        "{}\n{}",
+        macos_wallpaper_script(path),
+        macos_layout_script(layout)
     );
     command_status(
         Command::new("osascript").arg("-e").arg(script).status(),
@@ -186,10 +285,10 @@ fn set_platform_wallpaper(path: &Path, _layout: WallpaperLayoutPreference) -> Re
 }
 
 #[cfg(target_os = "linux")]
-fn set_platform_wallpaper(path: &Path, _layout: WallpaperLayoutPreference) -> Result<(), String> {
+fn set_platform_wallpaper(path: &Path, layout: WallpaperLayoutPreference) -> Result<(), String> {
     let mut failures = Vec::new();
 
-    for command in linux_wallpaper_commands(path) {
+    for command in linux_wallpaper_commands(path, layout) {
         if !command_exists(&command.program) {
             continue;
         }
@@ -214,10 +313,36 @@ fn set_platform_wallpaper(_path: &Path, _layout: WallpaperLayoutPreference) -> R
     Err("Wallpaper changes are not supported on this operating system.".into())
 }
 
-pub fn linux_wallpaper_commands(path: &Path) -> Vec<WallpaperCommand> {
+pub fn linux_wallpaper_commands(
+    path: &Path,
+    layout: WallpaperLayoutPreference,
+) -> Vec<WallpaperCommand> {
     let path_text = path.to_string_lossy().to_string();
     let uri = file_uri(path);
+    let feh_arg = match layout {
+        WallpaperLayoutPreference::Fit => "--bg-scale",
+        WallpaperLayoutPreference::Stretch => "--bg-scale",
+        WallpaperLayoutPreference::Tile => "--bg-tile",
+        WallpaperLayoutPreference::Center => "--bg-center",
+        WallpaperLayoutPreference::Fill | WallpaperLayoutPreference::Span => "--bg-fill",
+    };
+    let xwallpaper_arg = match layout {
+        WallpaperLayoutPreference::Fit => "--maximize",
+        WallpaperLayoutPreference::Stretch => "--stretch",
+        WallpaperLayoutPreference::Tile => "--tile",
+        WallpaperLayoutPreference::Center => "--center",
+        WallpaperLayoutPreference::Fill | WallpaperLayoutPreference::Span => "--zoom",
+    };
     vec![
+        WallpaperCommand {
+            program: "gsettings".into(),
+            args: vec![
+                "set".into(),
+                "org.gnome.desktop.background".into(),
+                "picture-options".into(),
+                linux_picture_option(layout).into(),
+            ],
+        },
         WallpaperCommand {
             program: "gsettings".into(),
             args: vec![
@@ -238,17 +363,42 @@ pub fn linux_wallpaper_commands(path: &Path) -> Vec<WallpaperCommand> {
         },
         WallpaperCommand {
             program: "swww".into(),
-            args: vec!["img".into(), path_text.clone()],
+            args: vec![
+                "img".into(),
+                path_text.clone(),
+                "--resize".into(),
+                swww_resize_option(layout).into(),
+            ],
         },
         WallpaperCommand {
             program: "feh".into(),
-            args: vec!["--bg-fill".into(), path_text.clone()],
+            args: vec![feh_arg.into(), path_text.clone()],
         },
         WallpaperCommand {
             program: "xwallpaper".into(),
-            args: vec!["--zoom".into(), path_text],
+            args: vec![xwallpaper_arg.into(), path_text],
         },
     ]
+}
+
+pub fn linux_picture_option(layout: WallpaperLayoutPreference) -> &'static str {
+    match layout {
+        WallpaperLayoutPreference::Fill => "zoom",
+        WallpaperLayoutPreference::Fit => "scaled",
+        WallpaperLayoutPreference::Stretch => "stretched",
+        WallpaperLayoutPreference::Tile => "wallpaper",
+        WallpaperLayoutPreference::Center => "centered",
+        WallpaperLayoutPreference::Span => "spanned",
+    }
+}
+
+fn swww_resize_option(layout: WallpaperLayoutPreference) -> &'static str {
+    match layout {
+        WallpaperLayoutPreference::Fill | WallpaperLayoutPreference::Span => "crop",
+        WallpaperLayoutPreference::Fit | WallpaperLayoutPreference::Center => "fit",
+        WallpaperLayoutPreference::Stretch => "stretch",
+        WallpaperLayoutPreference::Tile => "no",
+    }
 }
 
 pub fn windows_layout_registry_values(
@@ -304,7 +454,61 @@ fn current_screen_size() -> Option<(u32, u32)> {
 
 #[cfg(not(target_os = "windows"))]
 fn current_screen_size() -> Option<(u32, u32)> {
+    platform_screen_size()
+}
+
+#[cfg(target_os = "macos")]
+fn platform_screen_size() -> Option<(u32, u32)> {
+    let output = Command::new("osascript")
+        .arg("-e")
+        .arg("tell application \"Finder\" to get bounds of window of desktop")
+        .output()
+        .ok()?;
+    if !output.status.success() {
+        return None;
+    }
+    parse_macos_display_bounds(&String::from_utf8_lossy(&output.stdout))
+}
+
+#[cfg(target_os = "linux")]
+fn platform_screen_size() -> Option<(u32, u32)> {
+    Command::new("xrandr")
+        .arg("--current")
+        .output()
+        .ok()
+        .and_then(|output| {
+            if output.status.success() {
+                parse_xrandr_current(&String::from_utf8_lossy(&output.stdout))
+            } else {
+                None
+            }
+        })
+        .or_else(|| {
+            Command::new("xdpyinfo").output().ok().and_then(|output| {
+                if output.status.success() {
+                    parse_xdpyinfo_dimensions(&String::from_utf8_lossy(&output.stdout))
+                } else {
+                    None
+                }
+            })
+        })
+}
+
+#[cfg(not(any(target_os = "macos", target_os = "linux")))]
+fn platform_screen_size() -> Option<(u32, u32)> {
     None
+}
+
+pub fn screen_size_or_resolution(
+    detected: Option<(u32, u32)>,
+    resolution: ResolutionPreference,
+) -> Option<(u32, u32)> {
+    detected.or(match resolution {
+        ResolutionPreference::Auto => None,
+        ResolutionPreference::FullHd | ResolutionPreference::FourK => {
+            Some(resolution.minimum_dimensions())
+        }
+    })
 }
 
 fn safe_file_stem(value: &str) -> String {
@@ -372,6 +576,65 @@ fn file_uri(path: &Path) -> String {
     format!("file://{}", encode_uri_path(&normalized))
 }
 
+pub fn parse_macos_display_bounds(value: &str) -> Option<(u32, u32)> {
+    let parts = value
+        .split(',')
+        .filter_map(|part| part.trim().parse::<i32>().ok())
+        .collect::<Vec<_>>();
+    if parts.len() != 4 {
+        return None;
+    }
+
+    let width = (parts[2] - parts[0]).unsigned_abs();
+    let height = (parts[3] - parts[1]).unsigned_abs();
+    if width == 0 || height == 0 {
+        None
+    } else {
+        Some((width, height))
+    }
+}
+
+#[cfg_attr(not(target_os = "linux"), allow(dead_code))]
+fn parse_xrandr_current(value: &str) -> Option<(u32, u32)> {
+    value.lines().find_map(|line| {
+        if !line.contains('*') {
+            return None;
+        }
+        line.split_whitespace().find_map(parse_dimensions)
+    })
+}
+
+#[cfg_attr(not(target_os = "linux"), allow(dead_code))]
+fn parse_xdpyinfo_dimensions(value: &str) -> Option<(u32, u32)> {
+    value.lines().find_map(|line| {
+        line.trim()
+            .strip_prefix("dimensions:")
+            .and_then(|line| line.split_whitespace().next())
+            .and_then(parse_dimensions)
+    })
+}
+
+#[cfg_attr(not(target_os = "linux"), allow(dead_code))]
+fn parse_dimensions(value: &str) -> Option<(u32, u32)> {
+    let (width, height) = value.split_once('x')?;
+    let width = width.parse::<u32>().ok()?;
+    let height = height.parse::<u32>().ok()?;
+    if width == 0 || height == 0 {
+        None
+    } else {
+        Some((width, height))
+    }
+}
+
+pub fn parse_current_wallpaper_output(value: &str) -> Option<PathBuf> {
+    let value = value.trim().trim_matches('"').trim_matches('\'');
+    if value.is_empty() {
+        None
+    } else {
+        Some(PathBuf::from(value))
+    }
+}
+
 fn encode_uri_path(value: &str) -> String {
     let mut encoded = String::new();
     for byte in value.bytes() {
@@ -390,6 +653,24 @@ fn escape_osascript_path(path: &Path) -> String {
     path.to_string_lossy()
         .replace('\\', "\\\\")
         .replace('"', "\\\"")
+}
+
+#[cfg(target_os = "macos")]
+fn macos_wallpaper_script(path: &Path) -> String {
+    format!(
+        "tell application \"System Events\" to set picture of every desktop to \"{}\"",
+        escape_osascript_path(path)
+    )
+}
+
+#[cfg(target_os = "macos")]
+fn macos_layout_script(layout: WallpaperLayoutPreference) -> &'static str {
+    match layout {
+        WallpaperLayoutPreference::Tile => {
+            "tell application \"System Events\" to set picture rotation of every desktop to 1"
+        }
+        _ => "tell application \"System Events\" to set picture rotation of every desktop to 0",
+    }
 }
 
 #[cfg(target_os = "macos")]
@@ -431,19 +712,85 @@ mod tests {
     }
 
     #[test]
-    fn linux_commands_include_gnome_and_common_wallpaper_tools() {
-        let commands = linux_wallpaper_commands(Path::new("/home/me/Pictures/wall one.jpg"));
+    fn linux_commands_include_gnome_layout_and_common_wallpaper_tools() {
+        let commands = linux_wallpaper_commands(
+            Path::new("/home/me/Pictures/wall one.jpg"),
+            WallpaperLayoutPreference::Fit,
+        );
 
         assert!(commands.iter().any(|command| command.program == "gsettings"
             && command.args.contains(&"picture-uri".to_string())
             && command
                 .args
                 .contains(&"file:///home/me/Pictures/wall%20one.jpg".to_string())));
+        assert!(commands.iter().any(|command| command.program == "gsettings"
+            && command.args.contains(&"picture-options".to_string())
+            && command.args.contains(&"scaled".to_string())));
         assert!(commands.iter().any(|command| command.program == "swww"));
         assert!(commands.iter().any(|command| command.program == "feh"));
         assert!(commands
             .iter()
             .any(|command| command.program == "xwallpaper"));
+    }
+
+    #[test]
+    fn linux_layout_values_match_gnome_picture_options() {
+        assert_eq!(
+            linux_picture_option(WallpaperLayoutPreference::Fill),
+            "zoom"
+        );
+        assert_eq!(
+            linux_picture_option(WallpaperLayoutPreference::Fit),
+            "scaled"
+        );
+        assert_eq!(
+            linux_picture_option(WallpaperLayoutPreference::Stretch),
+            "stretched"
+        );
+        assert_eq!(
+            linux_picture_option(WallpaperLayoutPreference::Tile),
+            "wallpaper"
+        );
+        assert_eq!(
+            linux_picture_option(WallpaperLayoutPreference::Center),
+            "centered"
+        );
+        assert_eq!(
+            linux_picture_option(WallpaperLayoutPreference::Span),
+            "spanned"
+        );
+    }
+
+    #[test]
+    fn screen_size_falls_back_to_resolution_preference() {
+        assert_eq!(
+            screen_size_or_resolution(None, crate::settings::ResolutionPreference::FourK),
+            Some((3840, 2160))
+        );
+        assert_eq!(
+            screen_size_or_resolution(
+                Some((2560, 1440)),
+                crate::settings::ResolutionPreference::FullHd,
+            ),
+            Some((2560, 1440))
+        );
+    }
+
+    #[test]
+    fn parses_macos_display_bounds_from_osascript() {
+        assert_eq!(
+            parse_macos_display_bounds("0, 0, 3024, 1964"),
+            Some((3024, 1964))
+        );
+    }
+
+    #[test]
+    fn parses_current_wallpaper_output() {
+        assert_eq!(
+            parse_current_wallpaper_output(" /Users/me/Pictures/wall.jpg\n"),
+            Some(PathBuf::from("/Users/me/Pictures/wall.jpg"))
+        );
+        assert_eq!(parse_current_wallpaper_output(""), None);
     }
 
     #[test]
@@ -497,6 +844,38 @@ mod tests {
 
         assert_ne!(resized, source);
         assert_eq!(resized_image.dimensions(), (200, 100));
+
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn screen_resize_preserves_supported_source_format() {
+        let dir = temp_dir("screen-resize-png");
+        let output_dir = dir.join("screen");
+        std::fs::create_dir_all(&dir).expect("temp dir should be created");
+        let source = dir.join("source.png");
+        let image = image::DynamicImage::ImageRgba8(image::RgbaImage::from_pixel(
+            400,
+            200,
+            image::Rgba([10, 20, 30, 160]),
+        ));
+        image.save(&source).expect("source image should save");
+
+        let resized =
+            resize_wallpaper_for_screen(&source, &output_dir, (200, 100)).expect("should resize");
+
+        assert_eq!(
+            resized.extension().and_then(|value| value.to_str()),
+            Some("png")
+        );
+        assert_eq!(
+            image::ImageReader::open(&resized)
+                .expect("resized image should open")
+                .with_guessed_format()
+                .expect("format should be guessed")
+                .format(),
+            Some(ImageFormat::Png)
+        );
 
         let _ = std::fs::remove_dir_all(dir);
     }

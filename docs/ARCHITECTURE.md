@@ -1,20 +1,18 @@
 # Wallpaper Engine Architecture
 
-This document describes the current architecture of Wallpaper Engine as of commit `78d0f8d`.
+This document describes the current architecture of Wallpaper Engine. The app is a Tauri 2 desktop application with a React/Vite frontend and a Rust backend. React owns presentation and interaction state. Rust owns provider API calls, settings persistence, SQLite metadata, file caching, image preparation, desktop wallpaper operations, and the auto-change scheduler.
 
-Wallpaper Engine is a desktop wallpaper manager built with a React/Vite frontend and a Tauri 2 Rust backend. The frontend owns presentation and user interaction. The Rust backend owns persistence, provider API calls, local caching, desktop wallpaper changes, and the auto-change scheduler.
-
-## High-Level Shape
+## High-Level System
 
 ```mermaid
 flowchart LR
   User[User] --> React[React UI]
   React -->|Tauri invoke| Commands[Rust command layer]
   Commands --> Settings[settings.json]
-  Commands --> API[Provider API client]
-  Commands --> Cache[Wallpaper cache]
+  Commands --> API[Provider clients]
+  Commands --> Cache[Wallpaper file cache]
   Commands --> SQLite[wallpapers.sqlite3]
-  Commands --> OS[OS wallpaper APIs]
+  Commands --> OS[Desktop OS APIs and tools]
   API --> Pexels[Pexels]
   API --> Unsplash[Unsplash]
   API --> Pixabay[Pixabay]
@@ -23,101 +21,128 @@ flowchart LR
   API --> DeviantArt[DeviantArt]
 ```
 
-The main runtime boundary is the Tauri command interface. TypeScript calls `invoke(...)`; Rust receives typed command arguments, performs the privileged or persistent work, and returns serializable data back to the UI.
+The frontend never calls wallpaper providers directly and never touches arbitrary local files. It uses Tauri commands as the only privileged boundary.
 
 ## Technology Stack
 
-- Frontend: React 19, TypeScript, Vite, lucide-react icons.
+- Frontend: React 19, TypeScript, Vite, lucide-react.
 - Desktop shell: Tauri 2.
-- Backend/runtime: Rust 2021.
-- HTTP client: `reqwest` with Rustls TLS.
-- Database: SQLite through `rusqlite` with the bundled SQLite feature.
-- Image processing: `image` crate for resizing oversized wallpapers.
-- Async runtime: Tokio through Tauri async runtime.
-- CI/build: GitHub Actions matrix for Windows, Linux, and macOS.
+- Backend: Rust 2021.
+- HTTP: `reqwest` with Rustls TLS.
+- Persistence: JSON settings plus SQLite through `rusqlite`.
+- Image processing: `image` crate with JPEG, PNG, and WebP support.
+- Async runtime: Tokio through Tauri.
+- Verification: Vitest for TypeScript helpers/component render states, Rust unit tests for backend behavior.
 
 ## Repository Layout
 
 ```text
 .
-|-- src/                         # React frontend
-|   |-- App.tsx                  # App state, navigation, Tauri command calls
-|   |-- types.ts                 # Shared frontend data types
-|   |-- pages/                   # Home, Search, Library, Settings screens
-|   |-- components/              # Reusable UI components
-|   |-- searchFlow.ts            # Search/source selection UI helper
-|   `-- settingsFlow.ts          # Settings input parsing helper
+|-- src/
+|   |-- App.tsx                  # Root shell, sidebar, theme resolution
+|   |-- appState.tsx             # React reducer, context, Tauri action wrappers
+|   |-- types.ts                 # Frontend DTOs and settings types
+|   |-- pages/                   # Home, Search, Library, Settings views
+|   |-- components/              # Wall cards, empty states, skeletons, error boundary
+|   |-- searchFlow.ts            # Source-selection helper
+|   |-- settingsFlow.ts          # Settings input parsing helpers
+|   |-- wallpaperSelection.ts    # Random wallpaper/mood selection helpers
+|   `-- themePreference.ts       # System/light/dark theme resolution
 |-- src-tauri/
-|   |-- tauri.conf.json          # Tauri app, bundle, asset protocol config
-|   |-- capabilities/default.json # Main window permissions
-|   |-- Cargo.toml               # Rust dependencies and crate config
+|   |-- tauri.conf.json          # Window, bundle, asset protocol, CSP
+|   |-- capabilities/default.json
+|   |-- Cargo.toml
 |   `-- src/
-|       |-- lib.rs               # Tauri setup, AppState, command handlers
-|       |-- main.rs              # Native entry point
-|       |-- models.rs            # Rust DTOs returned to the frontend
-|       |-- settings.rs          # Settings schema and JSON persistence
-|       |-- api.rs               # Provider requests and response mapping
-|       |-- cache.rs             # SQLite library and file cache
-|       `-- wallpaper.rs         # OS wallpaper application and resizing
-|-- .github/workflows/build.yml  # Desktop bundle CI
-`-- docs/                        # Project documentation
+|       |-- lib.rs               # Tauri setup, commands, scheduler
+|       |-- models.rs            # Rust DTOs
+|       |-- settings.rs          # Settings schema and sanitization
+|       |-- api.rs               # Provider clients and normalizers
+|       |-- cache.rs             # SQLite metadata and file cache
+|       `-- wallpaper.rs         # OS wallpaper integration and image resizing
+|-- docs/ARCHITECTURE.md
+`-- .github/workflows/build.yml
 ```
 
 ## Frontend Architecture
 
-The frontend is intentionally thin. It keeps UI state in React and delegates real work to Rust commands.
+The frontend state is centralized in `src/appState.tsx` using `useReducer` plus `AppStateContext`. Pages consume context directly instead of receiving large prop bundles from `App.tsx`.
 
-### `src/App.tsx`
+### State Model
 
-`App.tsx` is the frontend coordinator. It stores:
+`AppState` contains:
 
-- active view: `home`, `search`, `library`, or `settings`
-- loaded settings
-- current wallpaper
-- library data
-- cache stats
-- search query/source/page/results
-- selected mood
-- busy and notice state
+| Field | Purpose |
+| --- | --- |
+| `activeView` | Current view: `home`, `search`, `library`, or `settings`. |
+| `settings` | Loaded and sanitized app settings. |
+| `currentWallpaper` | Wallpaper most recently applied through the UI. |
+| `library` | Favorites and downloaded wallpapers from SQLite. |
+| `cacheStats` | Recursive cache size and file count. |
+| `query` / `source` | Current search request state. |
+| `mood` | Active mood category. |
+| `results` / `page` | Search result list and current page. |
+| `busy` | Loading/action identifier such as `search` or `set-<id>`. |
+| `notice` | User-visible success or error message. |
 
-On boot, `App.tsx` checks whether it is running inside Tauri. If yes, it invokes:
+Derived context values include `hasAnyKey` and `favoriteIds`.
 
-- `get_settings`
-- `list_library`
-- `cache_stats`
+### Action Layer
 
-All commands go through a shared `runWithStatus` helper that sets a busy label, catches command errors, and surfaces messages in the UI.
+Context actions wrap Tauri commands with a common `runWithStatus` flow:
 
-### Pages
+1. Set the `busy` label and clear the old notice.
+2. Reject wallpaper actions outside the Tauri runtime with a clear message.
+3. Invoke the backend command.
+4. Store success messages or command errors.
+5. Refresh library/cache state after mutations.
 
-- `HomePage`: current wallpaper preview, mood buttons, trending topics, random/next/save actions.
-- `SearchPage`: provider selector, search box, result grid, load more.
-- `LibraryPage`: saved favorites and downloaded wallpapers from SQLite.
-- `SettingsPage`: API keys, theme, layout, auto-change interval, resolution, cache limit, Wallhaven NSFW toggle, cache clear action.
+Important actions:
 
-### Components
+- `searchWallpapers`: invokes `search_wallpapers`; page 1 replaces results and later pages append.
+- `applyMood`: picks a random query from the selected mood and searches it.
+- `applyNextFromMood`: picks a random mood query, fetches page 1, then applies a random returned wallpaper.
+- `setWallpaper`: downloads, prepares, applies, records, and refreshes state.
+- `saveSettings`: saves sanitized settings and restarts the backend scheduler.
 
-- `WallCard`: renders one wallpaper result or cached wallpaper and exposes set/save actions.
-- `MoodBar`: renders fixed mood chips that map to predefined search queries.
+### View Composition
 
-### Frontend Types
+`App.tsx` owns only the shell:
 
-`src/types.ts` mirrors the serializable Rust models. Both sides use camelCase JSON through Serde and TypeScript interfaces, so objects can pass through Tauri without manual conversion.
+- Theme resolution for `system`, `light`, and `dark`.
+- Sidebar navigation.
+- Error boundary wrapper.
+- Current page selection.
+
+Pages:
+
+- `HomePage`: current preview, provider status, mood chips, trending topics, random/next/save actions.
+- `SearchPage`: source selector, search box, grid, loading skeletons, empty state, and infinite scroll sentinel.
+- `LibraryPage`: favorite and downloaded sections with empty states and a confirmation before clearing metadata.
+- `SettingsPage`: API keys, theme, layout, auto-change interval, resolution, cache limit, NSFW toggle, save, and cache clear confirmation.
+
+Components:
+
+- `WallCard`: preview thumbnail, set action, favorite action with filled heart for saved wallpapers.
+- `FallbackImage`: replaces broken images with a structured fallback.
+- `WallGridSkeleton`: shimmer placeholders during searches.
+- `EmptyState`: shared blank-state UI.
+- `ErrorBoundary`: render-crash fallback for the app shell.
+- `MoodBar`: fixed mood selector.
 
 ## Backend Architecture
 
-The backend is organized by responsibility:
+The backend is split by responsibility:
 
-- `lib.rs`: command layer and app lifecycle.
-- `settings.rs`: user settings JSON.
-- `api.rs`: provider clients and response normalization.
-- `cache.rs`: metadata database and local file cache.
-- `wallpaper.rs`: operating-system wallpaper operations.
-- `models.rs`: shared Rust DTOs.
+| Module | Responsibility |
+| --- | --- |
+| `lib.rs` | Tauri setup, command handlers, scheduler, wallpaper lock state. |
+| `settings.rs` | Settings defaults, load/save, and sanitization. |
+| `api.rs` | Provider request construction, response parsing, result filtering. |
+| `cache.rs` | SQLite schema, upserts, library queries, cache stats, eviction. |
+| `wallpaper.rs` | Screen sizing, image resizing, OS wallpaper commands. |
+| `models.rs` | Serde DTOs shared across commands. |
 
-### AppState
-
-`AppState` in `src-tauri/src/lib.rs` is the shared backend context managed by Tauri:
+### Backend AppState
 
 ```rust
 pub struct AppState {
@@ -130,59 +155,11 @@ pub struct AppState {
 }
 ```
 
-It centralizes:
+The `reqwest::Client` is reused. SQLite still opens short-lived connections per operation, but schema creation is guarded by an init-once registry so `CREATE TABLE IF NOT EXISTS` is not rerun for every command.
 
-- one reusable HTTP client
-- the settings JSON path
-- the SQLite database path
-- the wallpaper cache directory
-- the optional auto-change scheduler task
-- the current wallpaper lock state
+## Settings
 
-### Startup Lifecycle
-
-On startup, Tauri runs `setup` in `lib.rs`:
-
-1. Resolve app-specific config, data, and cache directories from Tauri path APIs.
-2. Create those directories if missing.
-3. Resolve `settings.json`.
-4. Load settings or use defaults.
-5. Create/open `wallpapers.sqlite3`.
-6. Create a `wallpaper_lock` from the current desktop wallpaper when supported.
-7. Start the Windows wallpaper guard.
-8. Register `AppState` for command handlers.
-
-On macOS, observed locations are:
-
-- Settings: `~/Library/Application Support/com.puneetdixit.wallpaperengine/settings.json`
-- Database: `~/Library/Application Support/com.puneetdixit.wallpaperengine/wallpapers.sqlite3`
-- Cache: `~/Library/Caches/com.puneetdixit.wallpaperengine/wallpapers`
-
-Windows and Linux use Tauri's equivalent app config, app data, and app cache directories.
-
-## Tauri Command Interface
-
-The frontend calls these backend commands:
-
-| Command | Purpose |
-| --- | --- |
-| `get_settings` | Load saved settings or defaults. |
-| `save_settings` | Sanitize and save settings, then restart the scheduler if needed. |
-| `search_wallpapers` | Search a provider or merged provider set. |
-| `random_wallpapers` | Fetch random/curated wallpapers from a provider or merged provider set. |
-| `set_wallpaper` | Download, prepare, apply, and record one wallpaper. |
-| `save_favorite` | Mark a wallpaper as a favorite in SQLite. |
-| `list_library` | Return favorite and downloaded wallpaper lists. |
-| `cache_stats` | Return recursive cache size and file count. |
-| `clear_cache` | Remove cached files and clear stored local paths. |
-| `clear_library` | Delete all wallpaper metadata. |
-| `apply_random_wallpaper` | Fetch and apply a random wallpaper, with cached fallback. |
-
-The command layer always returns `Result<T, String>` so UI errors are readable without exposing Rust error types.
-
-## Settings Model
-
-Settings are stored as pretty JSON in camelCase:
+Settings are stored as pretty JSON with camelCase keys:
 
 ```json
 {
@@ -202,11 +179,24 @@ Settings are stored as pretty JSON in camelCase:
 }
 ```
 
-`settings.rs` trims API keys, clamps `cacheLimitMb` to `128..=10240`, and clamps `autoChangeMinutes` to at most one day. `theme`, `wallpaperLayout`, and `allowNsfwWallhaven` are active runtime settings. `resolution` and `cacheLimitMb` are currently persisted and shown in the UI; cache limit enforcement and provider resolution selection are not wired into the backend yet.
+Sanitization:
 
-## Provider API Layer
+- API keys are trimmed.
+- `autoChangeMinutes` is clamped to `0..=1440`.
+- `cacheLimitMb` is clamped to `128..=10240`.
 
-`src-tauri/src/api.rs` normalizes all provider responses into one `Wallpaper` model:
+Runtime effects:
+
+- `theme` controls frontend light/dark/system rendering.
+- `wallpaperLayout` controls platform-specific layout commands.
+- `autoChangeMinutes` controls scheduler lifecycle.
+- `resolution` changes provider filtering and Wallhaven `atleast` values, and is used as a fallback screen size for resizing.
+- `cacheLimitMb` is enforced after downloads by evicting least-recently-used cached wallpapers.
+- `allowNsfwWallhaven` enables NSFW Wallhaven purity only when a Wallhaven key is also present.
+
+## Provider Layer
+
+`api.rs` normalizes providers into the Rust `Wallpaper` model:
 
 ```rust
 pub struct Wallpaper {
@@ -218,52 +208,56 @@ pub struct Wallpaper {
     pub width: u32,
     pub height: u32,
     pub query_used: Option<String>,
+    pub mood: Option<String>,
     pub local_path: Option<String>,
     pub is_favorite: bool,
 }
 ```
 
-Supported sources:
+Supported `ApiSource` values are `all`, `pexels`, `unsplash`, `pixabay`, `wallhaven`, `picsum`, `deviantArt`, and `artStation`. The old dead `both` source has been removed. `artStation` remains a typed value but returns an explicit unsupported error because there is no stable public search API.
+
+Provider behavior:
 
 - Pexels: search and curated random; requires API key.
 - Unsplash: search and random; requires access key.
 - Pixabay: search; requires API key.
-- Wallhaven: search/random; SFW works without a key, NSFW requires API key.
-- Lorem Picsum: no-key placeholder source.
-- DeviantArt: tag search; requires OAuth access token.
-- ArtStation: deliberately unsupported because there is no stable public search API.
+- Wallhaven: search/random; SFW works without a key, NSFW requires API key and setting opt-in.
+- Lorem Picsum: no-key fallback source.
+- DeviantArt: tag search with full multi-word query support; requires OAuth token.
 
-Provider response mappers filter results through `is_desktop_wallpaper`, which rejects small images, portrait images, and extreme aspect ratios outside `1.3..=5.5`.
+For `ApiSource::All`, enabled providers are fetched concurrently with `tokio::join!`. Results are merged from successful providers. If every provider fails, the joined errors are returned.
 
-For merged sources, the backend calls the enabled providers, collects successes, and returns partial results if at least one provider succeeded. It returns the joined provider errors only when every provider fails.
+Result filtering rejects small images, portrait images, and extreme aspect ratios. The minimum dimensions depend on `resolution`: automatic defaults are permissive, Full HD requires `1920x1080`, and 4K requires `3840x2160`. Wallhaven receives matching `atleast` parameters.
 
 ## Search Flow
 
 ```mermaid
 sequenceDiagram
-  participant UI as React UI
+  participant UI as React SearchPage
+  participant State as AppStateContext
   participant Rust as Tauri command
   participant API as api.rs
   participant Provider as External provider
 
-  UI->>Rust: invoke("search_wallpapers", query, page, source)
+  UI->>State: searchWallpapers(page, query, source)
+  State->>Rust: invoke("search_wallpapers", query, page, source)
   Rust->>Rust: load settings.json
-  Rust->>API: search_wallpapers(client, query, page, source, keys, nsfw)
+  Rust->>API: search_wallpapers(..., resolution, keys)
   API->>Provider: HTTP request
-  Provider-->>API: provider-specific JSON
-  API->>API: map to Wallpaper[] and filter desktop images
+  Provider-->>API: provider JSON
+  API->>API: normalize and filter Wallpaper[]
   API-->>Rust: Wallpaper[]
-  Rust-->>UI: Wallpaper[]
-  UI->>UI: render WallCard grid
+  Rust-->>State: Wallpaper[]
+  State->>UI: replace or append results
 ```
 
-Search is pull-based from the UI. The backend does not store search results until a wallpaper is applied or explicitly favorited.
+Search results are transient. A wallpaper is persisted only when it is favorited or applied.
 
-## Wallpaper Apply Flow
+## Apply Flow
 
 ```mermaid
 sequenceDiagram
-  participant UI as React UI
+  participant UI as React action
   participant Rust as set_wallpaper
   participant Cache as cache.rs
   participant Image as wallpaper.rs
@@ -272,19 +266,19 @@ sequenceDiagram
 
   UI->>Rust: invoke("set_wallpaper", wallpaper)
   Rust->>Rust: load settings.json
-  Rust->>Cache: download_wallpaper(fullUrl)
-  Cache-->>Rust: cache/full/<id>.jpg
-  Rust->>Image: prepare_wallpaper_for_screen(path)
-  Image-->>Rust: original or cache/screen/<id>-WxH.jpg
+  Rust->>Cache: download_wallpaper()
+  Cache-->>Rust: cache/full/<id>.<source-format>
+  Rust->>Image: prepare_wallpaper_for_screen(path, resolution)
+  Image-->>Rust: original or cache/screen/<id>-WxH.<source-format>
   Rust->>OS: set_desktop_wallpaper(path, layout)
-  Rust->>DB: record_wallpaper_used(...)
-  Rust->>Rust: remember_locked_wallpaper(...)
-  Rust-->>UI: updated Wallpaper with localPath
+  Rust->>DB: record_wallpaper_used(wallpaper, local_path)
+  Rust->>Cache: enforce_cache_limit_mb()
+  Rust-->>UI: Wallpaper with localPath
 ```
 
-The cache stores original downloads under `wallpapers/full`. On Windows, oversized images may be resized into `wallpapers/screen` to reduce the applied file to the current screen size. On non-Windows platforms, `current_screen_size` currently returns `None`, so the original cached image is used.
+Downloads preserve supported image extensions from the URL or HTTP content type. Resized screen-cache images preserve JPEG, PNG, or WebP format when supported. JPEG resize output is converted to RGB for compatibility.
 
-## Library and Cache
+## Library, Cache, and Metadata
 
 SQLite table:
 
@@ -307,60 +301,64 @@ CREATE TABLE IF NOT EXISTS wallpapers (
 );
 ```
 
-The database is metadata only. Image bytes live in the cache directory. Favorites and downloaded wallpapers can point to the same row. Upserts preserve favorite status and increment `used_count` when a wallpaper is applied.
+The database stores metadata only. Image bytes live under the app cache directory:
 
-`clear_cache` removes cached files and nulls `local_path` values. `clear_library` deletes all wallpaper metadata. These are separate operations because a user may want to clear bytes without losing favorite/search metadata, or clear metadata without directly managing files.
+- `wallpapers/full`: original downloaded files.
+- `wallpapers/screen`: resized files prepared for the detected or configured screen size.
 
-## Auto-Change Scheduler
+`mood` is populated when a wallpaper comes from a mood flow, so future features can filter history by mood. Upserts preserve favorite status and preserve existing `query_used`/`mood` values when an incoming update omits them.
 
-`save_settings` restarts the scheduler after writing settings:
+Cache eviction runs after every wallpaper download/apply. It compares recursive cache bytes to `cacheLimitMb`, removes least-recently-used DB-backed cached files first using `last_used`, nulls their `local_path`, and then removes oldest stray cache files if the cache is still over the limit.
+
+`clear_cache` removes cached files and nulls local paths. `clear_library` deletes all wallpaper metadata. Both frontend actions require confirmation.
+
+## Scheduler
+
+`save_settings` restarts the scheduler after settings are written:
 
 - `autoChangeMinutes == 0`: scheduler is stopped.
-- `autoChangeMinutes > 0`: existing task is aborted and a new Tokio interval task starts.
+- `autoChangeMinutes > 0`: old task is aborted and a new interval task starts.
 
-Each timer tick calls `apply_random_wallpaper_inner` with `ApiSource::All`. That path:
+The scheduler uses `tokio::time::interval_at(now + interval, interval)`, so saving settings does not immediately change the wallpaper. Each tick applies a random wallpaper from `ApiSource::All`, using cached fallback only if every provider fails.
 
-1. Loads current settings.
-2. Fetches random/curated wallpapers from enabled providers.
-3. Applies the first returned wallpaper.
-4. If every provider fails, attempts to apply a random cached wallpaper.
-5. Updates the wallpaper lock when application succeeds.
+The scheduler is process-local. It runs only while the app process is alive.
 
-The scheduler only runs while the desktop app process is running.
+## Platform Support Matrix
 
-## OS Wallpaper Integration
+| Capability | Windows | macOS | Linux |
+| --- | --- | --- | --- |
+| Set wallpaper | `SystemParametersInfoW` | `osascript` / System Events | `gsettings`, `swww`, `feh`, or `xwallpaper` |
+| Layout support | Fill, Fit, Stretch, Tile, Center, Span via registry | Tile toggles picture rotation; other layouts use macOS scaling behavior | GNOME `picture-options` plus tool-specific flags |
+| Screen size detection | `GetSystemMetrics` | Finder desktop bounds via `osascript` | `xrandr --current`, fallback `xdpyinfo` |
+| Resize before apply | Yes | Yes when screen size is detected or resolution fallback is set | Yes when screen size is detected or resolution fallback is set |
+| Current wallpaper detection | `SPI_GETDESKWALLPAPER` | System Events desktop picture | GNOME `picture-uri` |
+| Wallpaper guard loop | Yes | No | No |
 
-`src-tauri/src/wallpaper.rs` hides platform differences:
-
-- Windows:
-  - Reads current wallpaper with `SystemParametersInfoW(SPI_GETDESKWALLPAPER)`.
-  - Sets layout registry values under `HKCU\Control Panel\Desktop`.
-  - Applies wallpaper with `SystemParametersInfoW(SPI_SETDESKWALLPAPER)`.
-  - Starts a guard loop that checks every five seconds and restores the app wallpaper if Windows slideshow/theme changes override it.
-- macOS:
-  - Applies wallpaper with `osascript`: `System Events` sets every desktop picture.
-  - Layout preference is accepted by the API but not applied because this path delegates to macOS.
-- Linux:
-  - Tries supported tools in order: `gsettings`, `swww`, `feh`, `xwallpaper`.
-  - Layout preference is accepted by the API but the current fallback commands use their default fill/zoom behavior.
-
-Unsupported operating systems return a clear error.
+Unsupported operating systems return a clear error for wallpaper changes.
 
 ## Security and Permissions
 
-The Tauri capability file grants the main window default core permissions and opener permissions. The app does not expose arbitrary filesystem APIs to the frontend.
+The frontend has only the Tauri permissions declared in `capabilities/default.json`. It does not receive a general filesystem API.
 
-The Tauri asset protocol is enabled for:
+Tauri asset protocol is scoped to:
 
 ```json
 "scope": ["$APPCACHE/wallpapers/**"]
 ```
 
-That allows React to preview cached wallpaper files through `convertFileSrc` while keeping asset access scoped to the wallpaper cache.
+This allows cached previews through `convertFileSrc` without exposing arbitrary files.
 
-API keys are stored locally in `settings.json`. They are not sent to the frontend except when loading settings for the Settings screen, and they are only sent over the network to the matching provider APIs by Rust.
+The Tauri CSP is non-null and restricts the app shell:
 
-## Build and Release Flow
+- `default-src 'self'`
+- `script-src 'self'`
+- `style-src 'self' 'unsafe-inline'` for bundled CSS/runtime style needs
+- `img-src 'self' asset: http://asset.localhost https: data:` for local cache previews and provider thumbnails
+- `connect-src 'self' ipc: http://ipc.localhost https:` for Tauri IPC and provider requests
+
+API keys are stored locally in `settings.json`. They are loaded into the Settings screen and sent only by Rust to the matching provider APIs.
+
+## Build and Verification
 
 Local development:
 
@@ -369,63 +367,62 @@ npm install
 npm run tauri dev
 ```
 
-Verification:
+Core verification:
 
 ```bash
+npm test
 npm run build
 cargo test --manifest-path src-tauri/Cargo.toml
+```
+
+Release packaging:
+
+```bash
 npm run tauri build
 ```
 
-GitHub Actions runs `Build desktop app` on push, pull request, and manual dispatch. The matrix builds:
+GitHub Actions builds Windows, Linux, and macOS bundles and uploads release artifacts from `src-tauri/target/release/bundle/**`.
 
-- Windows: `windows-latest`, artifact `wallpaper-engine-windows`
-- Linux: `ubuntu-22.04`, artifact `wallpaper-engine-linux`
-- macOS: `macos-latest`, artifact `wallpaper-engine-macos`
+## Testing Coverage
 
-Each job checks out the repo, installs Node 22, installs stable Rust, caches Rust dependencies, builds the frontend, runs Rust tests, builds the Tauri bundle, and uploads `src-tauri/target/release/bundle/**`.
+Current automated coverage includes:
 
-## Testing Strategy
+- Frontend reducer behavior, destructive confirmation helper, theme resolution, search/settings helpers, random mood/wallpaper selection, and server-rendered empty/skeleton/favorite states.
+- Provider mapping, filtering, Wallhaven purity/resolution behavior, DeviantArt multi-word tags, and concurrent merged provider behavior.
+- Settings defaults, sanitization, and persistence.
+- SQLite favorite/download/library behavior, mood persistence, init-once schema tracking, cache stats, and LRU eviction.
+- OS command construction, layout mapping, screen-size fallback, current-wallpaper parsing, image resizing, image format preservation, and wallpaper lock behavior.
+- Tauri asset protocol and CSP configuration.
 
-Current automated coverage focuses on backend logic and small frontend helpers:
+## Known Limitations
 
-- Settings load/save/defaults/clamping.
-- Provider response mapping and provider-specific validation.
-- SQLite favorite/download/cache behavior.
-- Wallpaper layout values, Linux command construction, image resizing, and wallpaper lock behavior.
-- Tauri asset protocol config.
-- Frontend helper tests for settings parsing and search source behavior.
-
-There is no full end-to-end UI test in the current tree. Manual verification is still useful for provider API calls, OS wallpaper behavior, and bundled app installation.
+- No full end-to-end UI automation is checked in yet.
+- Provider API rate limiting and retries are not implemented.
+- ArtStation remains unsupported because there is no stable public search API.
+- The wallpaper guard loop currently runs only on Windows, even though macOS/Linux can read current wallpaper paths.
+- Linux wallpaper behavior depends on installed desktop tools and desktop environment support.
+- SQLite uses short-lived connections rather than a full connection pool.
 
 ## Extension Points
 
-Common changes should fit these boundaries:
+Add a provider:
 
-- Add a provider:
-  1. Add source value to `src/types.ts` and `src-tauri/src/models.rs`.
-  2. Add frontend source option in `SearchPage`.
-  3. Add API key field if needed in `ApiKeys`, settings UI, and settings tests.
-  4. Add fetch and map functions in `api.rs`.
-  5. Wire the provider into `search_wallpapers` and `random_wallpapers`.
+1. Add the source value to `src/types.ts` and `src-tauri/src/models.rs`.
+2. Add a source option in `SearchPage`.
+3. Add API key fields if needed in settings types, UI, and tests.
+4. Add fetch and mapper functions in `api.rs`.
+5. Wire the provider into `search_wallpapers` and `random_wallpapers`.
 
-- Add a setting:
-  1. Add it to TypeScript `AppSettings`.
-  2. Add it to Rust `AppSettings` with Serde camelCase handling.
-  3. Add defaults and sanitization if needed.
-  4. Add Settings UI controls.
-  5. Consume it in the relevant backend command.
+Add a setting:
 
-- Add a wallpaper platform backend:
-  1. Add a target-specific `set_platform_wallpaper` branch in `wallpaper.rs`.
-  2. Add command construction helpers where possible.
-  3. Add unit tests for generated commands or layout values.
+1. Add it to frontend `AppSettings`.
+2. Add it to Rust `AppSettings` with Serde camelCase support.
+3. Add defaults and sanitization.
+4. Add Settings UI controls.
+5. Consume it in the relevant backend command.
 
-## Current Architectural Constraints
+Add a platform wallpaper backend:
 
-- The backend is the source of truth for provider calls, persistence, cache files, and OS wallpaper changes.
-- The frontend should not directly call provider APIs or touch local files outside Tauri commands.
-- Search results are transient until favorited or applied.
-- The scheduler is process-local; it does not run after the app exits.
-- Cached file previews depend on Tauri's scoped asset protocol.
-- `resolution` and `cacheLimitMb` are stored but not fully enforced in provider fetch or cache eviction logic yet.
+1. Add a target-specific branch in `wallpaper.rs`.
+2. Keep command construction in testable helper functions.
+3. Add tests for generated commands, layout values, and parsing behavior.

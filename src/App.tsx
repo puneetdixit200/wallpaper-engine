@@ -1,29 +1,13 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
-import { invoke } from "@tauri-apps/api/core";
-import {
-  Database,
-  Heart,
-  Home,
-  Image,
-  Search,
-  Settings,
-} from "lucide-react";
+import { useEffect, useState } from "react";
+import { Database, Heart, Home, Image, Search, Settings } from "lucide-react";
+import { AppStateProvider, useAppState } from "./appState";
+import { ErrorBoundary } from "./components/ErrorBoundary";
 import { HomePage } from "./pages/Home";
 import { SearchPage } from "./pages/Search";
 import { LibraryPage } from "./pages/Library";
 import { SettingsPage } from "./pages/Settings";
-import {
-  ApiSource,
-  AppSettings,
-  CacheStats,
-  defaultSettings,
-  Library,
-  Mood,
-  moodQueries,
-  ViewName,
-  Wallpaper,
-} from "./types";
-import { sourceSelectionSearch } from "./searchFlow";
+import { resolveThemePreference } from "./themePreference";
+import { ViewName } from "./types";
 import "./App.css";
 
 const navItems: Array<{ id: ViewName; label: string; icon: typeof Home }> = [
@@ -33,279 +17,57 @@ const navItems: Array<{ id: ViewName; label: string; icon: typeof Home }> = [
   { id: "settings", label: "Settings", icon: Settings },
 ];
 
-const isTauriRuntime = () =>
-  typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;
-
-function App() {
-  const [activeView, setActiveView] = useState<ViewName>("home");
-  const [settings, setSettings] = useState<AppSettings>(defaultSettings);
-  const [currentWallpaper, setCurrentWallpaper] = useState<Wallpaper | null>(
-    null,
+function useSystemPrefersDark() {
+  const [prefersDark, setPrefersDark] = useState(() =>
+    typeof window !== "undefined" &&
+    window.matchMedia("(prefers-color-scheme: dark)").matches,
   );
-  const [library, setLibrary] = useState<Library>({
-    favorites: [],
-    downloaded: [],
-  });
-  const [cacheStats, setCacheStats] = useState<CacheStats>({
-    bytes: 0,
-    files: 0,
-  });
-  const [query, setQuery] = useState("nature");
-  const [source, setSource] = useState<ApiSource>("all");
-  const [mood, setMood] = useState<Mood>("nature");
-  const [results, setResults] = useState<Wallpaper[]>([]);
-  const [page, setPage] = useState(1);
-  const [busy, setBusy] = useState<string | null>(null);
-  const [notice, setNotice] = useState("");
-
-  const hasAnyKey = useMemo(
-    () =>
-      settings.apiKeys.pexels.trim().length > 0 ||
-      settings.apiKeys.unsplash.trim().length > 0 ||
-      settings.apiKeys.pixabay.trim().length > 0 ||
-      settings.apiKeys.wallhaven.trim().length > 0 ||
-      settings.apiKeys.deviantart.trim().length > 0,
-    [
-      settings.apiKeys.pexels,
-      settings.apiKeys.unsplash,
-      settings.apiKeys.pixabay,
-      settings.apiKeys.wallhaven,
-      settings.apiKeys.deviantart,
-    ],
-  );
-
-  const refreshLibrary = useCallback(async () => {
-    const nextLibrary = await invoke<Library>("list_library");
-    setLibrary(nextLibrary);
-  }, []);
-
-  const refreshCacheStats = useCallback(async () => {
-    const stats = await invoke<CacheStats>("cache_stats");
-    setCacheStats(stats);
-  }, []);
 
   useEffect(() => {
-    async function boot() {
-      if (!isTauriRuntime()) {
-        return;
-      }
-
-      try {
-        const loaded = await invoke<AppSettings>("get_settings");
-        setSettings(loaded);
-        await Promise.all([refreshLibrary(), refreshCacheStats()]);
-      } catch (error) {
-        setNotice(String(error));
-      }
-    }
-
-    boot();
-  }, [refreshCacheStats, refreshLibrary]);
-
-  async function runWithStatus<T>(
-    label: string,
-    action: () => Promise<T>,
-    done?: string,
-  ): Promise<T | null> {
-    setBusy(label);
-    setNotice("");
-    if (!isTauriRuntime()) {
-      setNotice("Open the desktop app to use wallpaper actions.");
-      setBusy(null);
-      return null;
-    }
-
-    try {
-      const value = await action();
-      if (done) {
-        setNotice(done);
-      }
-      return value;
-    } catch (error) {
-      setNotice(String(error));
-      return null;
-    } finally {
-      setBusy(null);
-    }
-  }
-
-  async function saveSettings(nextSettings: AppSettings) {
-    const saved = await runWithStatus(
-      "settings",
-      () => invoke<AppSettings>("save_settings", { settings: nextSettings }),
-      "Settings saved.",
-    );
-    if (saved) {
-      setSettings(saved);
-    }
-  }
-
-  async function searchWallpapers(
-    nextPage = 1,
-    nextQuery = query,
-    nextSource = source,
-  ) {
-    const wallpapers = await runWithStatus("search", () =>
-      invoke<Wallpaper[]>("search_wallpapers", {
-        query: nextQuery,
-        page: nextPage,
-        source: nextSource,
-      }),
-    );
-    if (!wallpapers) {
+    if (typeof window === "undefined") {
       return;
     }
 
-    setPage(nextPage);
-    setResults((existing) =>
-      nextPage === 1 ? wallpapers : [...existing, ...wallpapers],
-    );
-    setActiveView("search");
-  }
+    const media = window.matchMedia("(prefers-color-scheme: dark)");
+    const update = () => setPrefersDark(media.matches);
+    update();
+    media.addEventListener("change", update);
+    return () => media.removeEventListener("change", update);
+  }, []);
 
-  async function changeSource(nextSource: ApiSource) {
-    setSource(nextSource);
-    const request = sourceSelectionSearch(query, nextSource);
-    await searchWallpapers(
-      request.nextPage,
-      request.nextQuery,
-      request.nextSource,
-    );
-  }
+  return prefersDark;
+}
 
-  async function setWallpaper(wallpaper: Wallpaper) {
-    const applied = await runWithStatus(
-      `set-${wallpaper.id}`,
-      () => invoke<Wallpaper>("set_wallpaper", { wallpaper }),
-      "Wallpaper applied.",
-    );
-    if (applied) {
-      setCurrentWallpaper(applied);
-      await Promise.all([refreshLibrary(), refreshCacheStats()]);
-    }
-  }
-
-  async function saveFavorite(wallpaper: Wallpaper) {
-    await runWithStatus(
-      `favorite-${wallpaper.id}`,
-      () => invoke("save_favorite", { wallpaper }),
-      "Saved to favorites.",
-    );
-    await refreshLibrary();
-  }
-
-  async function applyRandomWallpaper() {
-    const wallpaper = await runWithStatus(
-      "random",
-      () => invoke<Wallpaper>("apply_random_wallpaper"),
-      "Random wallpaper applied.",
-    );
-    if (wallpaper) {
-      setCurrentWallpaper(wallpaper);
-      await Promise.all([refreshLibrary(), refreshCacheStats()]);
-    }
-  }
-
-  async function applyMood(nextMood: Mood) {
-    setMood(nextMood);
-    const nextQuery = moodQueries[nextMood][0];
-    setQuery(nextQuery);
-    await searchWallpapers(1, nextQuery);
-  }
-
-  async function applyTopic(nextQuery: string) {
-    setQuery(nextQuery);
-    await searchWallpapers(1, nextQuery);
-  }
-
-  async function applyNextFromMood() {
-    const nextQuery = moodQueries[mood][0];
-    const wallpapers = await runWithStatus("next", () =>
-      invoke<Wallpaper[]>("search_wallpapers", {
-        query: nextQuery,
-        page: 1,
-        source,
-      }),
-    );
-    const wallpaper = wallpapers?.[0];
-    if (wallpaper) {
-      await setWallpaper(wallpaper);
-    }
-  }
-
-  async function clearWallpaperCache() {
-    const stats = await runWithStatus(
-      "clear-cache",
-      () => invoke<CacheStats>("clear_cache"),
-      "Cache cleared.",
-    );
-    if (stats) {
-      setCacheStats(stats);
-      await refreshLibrary();
-    }
-  }
-
-  async function clearLibrary() {
-    const nextLibrary = await runWithStatus(
-      "clear-library",
-      () => invoke<Library>("clear_library"),
-      "Library cleared.",
-    );
-    if (nextLibrary) {
-      setLibrary(nextLibrary);
-    }
-  }
+function AppShell() {
+  const {
+    activeView,
+    favoriteIds,
+    settings,
+    actions,
+  } = useAppState();
+  const systemPrefersDark = useSystemPrefersDark();
+  const resolvedTheme = resolveThemePreference(
+    settings.theme,
+    systemPrefersDark,
+  );
 
   const content =
     activeView === "home" ? (
-      <HomePage
-        busy={busy}
-        currentWallpaper={currentWallpaper}
-        providerState={hasAnyKey ? "API keys saved" : "Free sources ready"}
-        mood={mood}
-        notice={notice}
-        onMoodSelect={applyMood}
-        onNext={applyNextFromMood}
-        onRandom={applyRandomWallpaper}
-        onSaveCurrent={() =>
-          currentWallpaper ? saveFavorite(currentWallpaper) : undefined
-        }
-        onTopicSelect={applyTopic}
-      />
+      <HomePage />
     ) : activeView === "search" ? (
-      <SearchPage
-        busy={busy}
-        page={page}
-        query={query}
-        results={results}
-        source={source}
-        onLoadMore={() => searchWallpapers(page + 1)}
-        onQueryChange={setQuery}
-        onSearch={() => searchWallpapers(1)}
-        onSetWallpaper={setWallpaper}
-        onSaveFavorite={saveFavorite}
-        onSourceChange={changeSource}
-      />
+      <SearchPage />
     ) : activeView === "library" ? (
-      <LibraryPage
-        busy={busy}
-        library={library}
-        onClearLibrary={clearLibrary}
-        onSetWallpaper={setWallpaper}
-        onSaveFavorite={saveFavorite}
-      />
+      <LibraryPage />
     ) : (
-      <SettingsPage
-        busy={busy}
-        cacheStats={cacheStats}
-        settings={settings}
-        onClearCache={clearWallpaperCache}
-        onSave={saveSettings}
-      />
+      <SettingsPage />
     );
 
   return (
-    <main className="app-shell" data-theme={settings.theme}>
+    <main
+      className="app-shell"
+      data-theme={settings.theme}
+      data-resolved-theme={resolvedTheme}
+    >
       <aside className="sidebar">
         <div className="brand">
           <div className="brand-mark">
@@ -322,9 +84,11 @@ function App() {
             const Icon = item.icon;
             return (
               <button
-                className={activeView === item.id ? "nav-item active" : "nav-item"}
+                className={
+                  activeView === item.id ? "nav-item active" : "nav-item"
+                }
                 key={item.id}
-                onClick={() => setActiveView(item.id)}
+                onClick={() => actions.setActiveView(item.id)}
                 type="button"
               >
                 <Icon size={18} aria-hidden="true" />
@@ -336,12 +100,26 @@ function App() {
 
         <div className="sidebar-footer">
           <Heart size={16} aria-hidden="true" />
-          <span>{library.favorites.length} saved</span>
+          <span>{favoriteIds.size} saved</span>
         </div>
       </aside>
 
-      <section className="content-shell">{content}</section>
+      <section className="content-shell">
+        <div className="view-transition" key={activeView}>
+          {content}
+        </div>
+      </section>
     </main>
+  );
+}
+
+function App() {
+  return (
+    <ErrorBoundary>
+      <AppStateProvider>
+        <AppShell />
+      </AppStateProvider>
+    </ErrorBoundary>
   );
 }
 

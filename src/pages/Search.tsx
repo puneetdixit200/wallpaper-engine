@@ -1,20 +1,10 @@
+import { useEffect, useRef } from "react";
 import { Search as SearchIcon } from "lucide-react";
+import { useAppState } from "../appState";
+import { EmptyState } from "../components/EmptyState";
 import { WallCard } from "../components/WallCard";
-import { ApiSource, Wallpaper } from "../types";
-
-interface SearchPageProps {
-  busy: string | null;
-  page: number;
-  query: string;
-  results: Wallpaper[];
-  source: ApiSource;
-  onLoadMore: () => void;
-  onQueryChange: (query: string) => void;
-  onSearch: () => void;
-  onSetWallpaper: (wallpaper: Wallpaper) => void;
-  onSaveFavorite: (wallpaper: Wallpaper) => void;
-  onSourceChange: (source: ApiSource) => void;
-}
+import { WallGridSkeleton } from "../components/WallGridSkeleton";
+import { ApiSource } from "../types";
 
 const sourceOptions: Array<{ label: string; value: ApiSource }> = [
   { label: "all", value: "all" },
@@ -27,19 +17,51 @@ const sourceOptions: Array<{ label: string; value: ApiSource }> = [
   { label: "artStation", value: "artStation" },
 ];
 
-export function SearchPage({
-  busy,
-  page,
-  query,
-  results,
-  source,
-  onLoadMore,
-  onQueryChange,
-  onSearch,
-  onSetWallpaper,
-  onSaveFavorite,
-  onSourceChange,
-}: SearchPageProps) {
+export function SearchPage() {
+  const { busy, page, query, results, source, actions } = useAppState();
+  const sentinelRef = useRef<HTMLDivElement | null>(null);
+  const requestedPageRef = useRef(page);
+  const hasResults = results.length > 0;
+  const isSearchLoading = busy === "search";
+
+  useEffect(() => {
+    requestedPageRef.current = page;
+  }, [page, query, source]);
+
+  useEffect(() => {
+    if (
+      !hasResults ||
+      isSearchLoading ||
+      typeof IntersectionObserver === "undefined"
+    ) {
+      return;
+    }
+
+    const node = sentinelRef.current;
+    if (!node) {
+      return;
+    }
+
+    const observer = new IntersectionObserver(
+      (entries) => {
+        if (!entries.some((entry) => entry.isIntersecting)) {
+          return;
+        }
+
+        const nextPage = page + 1;
+        if (requestedPageRef.current >= nextPage) {
+          return;
+        }
+
+        requestedPageRef.current = nextPage;
+        void actions.searchWallpapers(nextPage);
+      },
+      { rootMargin: "360px 0px" },
+    );
+    observer.observe(node);
+    return () => observer.disconnect();
+  }, [actions, hasResults, isSearchLoading, page]);
+
   return (
     <div className="view-stack">
       <header className="view-header">
@@ -52,7 +74,7 @@ export function SearchPage({
             <button
               className={source === option.value ? "active" : ""}
               key={option.value}
-              onClick={() => onSourceChange(option.value)}
+              onClick={() => void actions.changeSource(option.value)}
               type="button"
             >
               {option.label}
@@ -65,12 +87,12 @@ export function SearchPage({
         className="search-bar"
         onSubmit={(event) => {
           event.preventDefault();
-          onSearch();
+          void actions.searchWallpapers(1);
         }}
       >
         <SearchIcon size={19} aria-hidden="true" />
         <input
-          onChange={(event) => onQueryChange(event.currentTarget.value)}
+          onChange={(event) => actions.setQuery(event.currentTarget.value)}
           placeholder="forest, city night, clean minimal..."
           value={query}
         />
@@ -80,27 +102,26 @@ export function SearchPage({
       </form>
 
       <section className="wall-grid">
-        {results.map((wallpaper) => (
-          <WallCard
-            busy={busy}
-            key={wallpaper.id}
-            onSaveFavorite={onSaveFavorite}
-            onSetWallpaper={onSetWallpaper}
-            wallpaper={wallpaper}
+        {!hasResults && !isSearchLoading ? (
+          <EmptyState
+            title="No results yet"
+            detail="Results will appear here."
           />
+        ) : null}
+        {results.map((wallpaper) => (
+          <WallCard key={wallpaper.id} wallpaper={wallpaper} />
         ))}
+        {isSearchLoading ? <WallGridSkeleton count={hasResults ? 3 : 6} /> : null}
       </section>
 
-      <div className="load-row">
-        <span>{results.length ? `Page ${page} loaded` : "No results loaded"}</span>
-        <button
-          className="secondary-button"
-          disabled={!results.length || busy === "search"}
-          onClick={onLoadMore}
-          type="button"
-        >
-          Load more
-        </button>
+      <div className="load-row" ref={sentinelRef}>
+        <span>
+          {hasResults
+            ? isSearchLoading
+              ? "Loading more wallpapers"
+              : `Page ${page} loaded`
+            : "No results loaded"}
+        </span>
       </div>
     </div>
   );

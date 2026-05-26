@@ -11,7 +11,6 @@ pub enum ApiSource {
     Picsum,
     DeviantArt,
     ArtStation,
-    Both,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -25,6 +24,8 @@ pub struct Wallpaper {
     pub width: u32,
     pub height: u32,
     pub query_used: Option<String>,
+    #[serde(default)]
+    pub mood: Option<String>,
     pub local_path: Option<String>,
     pub is_favorite: bool,
 }

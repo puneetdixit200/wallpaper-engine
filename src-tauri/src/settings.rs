@@ -98,6 +98,16 @@ impl Default for WallpaperLayoutPreference {
     }
 }
 
+impl ResolutionPreference {
+    pub fn minimum_dimensions(self) -> (u32, u32) {
+        match self {
+            Self::Auto => (1280, 720),
+            Self::FullHd => (1920, 1080),
+            Self::FourK => (3840, 2160),
+        }
+    }
+}
+
 impl AppSettings {
     pub fn sanitized(mut self) -> Self {
         self.api_keys.pexels = self.api_keys.pexels.trim().to_string();
@@ -231,5 +241,18 @@ mod tests {
         };
 
         assert_eq!(settings.sanitized().auto_change_minutes, 1_440);
+    }
+
+    #[test]
+    fn resolution_preferences_map_to_minimum_dimensions() {
+        assert_eq!(ResolutionPreference::Auto.minimum_dimensions(), (1280, 720));
+        assert_eq!(
+            ResolutionPreference::FullHd.minimum_dimensions(),
+            (1920, 1080)
+        );
+        assert_eq!(
+            ResolutionPreference::FourK.minimum_dimensions(),
+            (3840, 2160)
+        );
     }
 }
