@@ -149,6 +149,7 @@ pub fn map_pexels_search(raw: &str, query: &str) -> Result<Vec<Wallpaper>, Strin
             local_path: None,
             is_favorite: false,
         })
+        .filter(is_desktop_wallpaper)
         .collect())
 }
 
@@ -183,6 +184,7 @@ fn map_unsplash_photos(photos: Vec<UnsplashPhoto>, query: &str) -> Vec<Wallpaper
             local_path: None,
             is_favorite: false,
         })
+        .filter(is_desktop_wallpaper)
         .collect()
 }
 
@@ -205,6 +207,7 @@ pub fn map_pixabay_search(raw: &str, query: &str) -> Result<Vec<Wallpaper>, Stri
             local_path: None,
             is_favorite: false,
         })
+        .filter(is_desktop_wallpaper)
         .collect())
 }
 
@@ -227,6 +230,7 @@ pub fn map_wallhaven_search(raw: &str, query: &str) -> Result<Vec<Wallpaper>, St
             local_path: None,
             is_favorite: false,
         })
+        .filter(is_desktop_wallpaper)
         .collect())
 }
 
@@ -248,6 +252,7 @@ pub fn map_picsum_list(raw: &str, query: &str) -> Result<Vec<Wallpaper>, String>
             local_path: None,
             is_favorite: false,
         })
+        .filter(is_desktop_wallpaper)
         .collect())
 }
 
@@ -282,7 +287,17 @@ pub fn map_deviantart_tag(raw: &str, query: &str) -> Result<Vec<Wallpaper>, Stri
                 is_favorite: false,
             })
         })
+        .filter(is_desktop_wallpaper)
         .collect())
+}
+
+fn is_desktop_wallpaper(wallpaper: &Wallpaper) -> bool {
+    if wallpaper.width < 1280 || wallpaper.height < 720 || wallpaper.width < wallpaper.height {
+        return false;
+    }
+
+    let ratio = wallpaper.width as f32 / wallpaper.height as f32;
+    (1.3..=5.5).contains(&ratio)
 }
 
 pub async fn fetch_pexels(
@@ -303,6 +318,7 @@ pub async fn fetch_pexels(
             ("query", query),
             ("per_page", "20"),
             ("page", page.as_str()),
+            ("orientation", "landscape"),
         ])
         .header("Authorization", key)
         .send()
@@ -365,6 +381,7 @@ pub async fn fetch_unsplash(
             ("query", query),
             ("per_page", "20"),
             ("page", page.as_str()),
+            ("orientation", "landscape"),
         ])
         .header("Authorization", format!("Client-ID {key}"))
         .send()
@@ -462,6 +479,7 @@ pub async fn fetch_wallhaven(
         ("categories", "111"),
         ("purity", purity),
         ("atleast", "1920x1080"),
+        ("ratios", "16x9,16x10,21x9,32x9,48x9"),
         ("page", page.as_str()),
         ("sorting", if random { "random" } else { "relevance" }),
         ("order", "desc"),
@@ -837,6 +855,43 @@ mod tests {
         assert_eq!(wallpapers[0].full_url, "https://pixabay.com/large.jpg");
         assert_eq!(wallpapers[0].photographer, "Josch13");
         assert_eq!(wallpapers[0].query_used.as_deref(), Some("yellow flowers"));
+    }
+
+    #[test]
+    fn filters_non_desktop_sized_provider_results() {
+        let raw = r#"{
+          "hits": [
+            {
+              "id": 195893,
+              "webformatURL": "https://pixabay.com/desktop-thumb.jpg",
+              "largeImageURL": "https://pixabay.com/desktop-large.jpg",
+              "imageWidth": 4000,
+              "imageHeight": 2250,
+              "user": "Desktop"
+            },
+            {
+              "id": 195894,
+              "webformatURL": "https://pixabay.com/phone-thumb.jpg",
+              "largeImageURL": "https://pixabay.com/phone-large.jpg",
+              "imageWidth": 1080,
+              "imageHeight": 1920,
+              "user": "Phone"
+            },
+            {
+              "id": 195895,
+              "webformatURL": "https://pixabay.com/small-thumb.jpg",
+              "largeImageURL": "https://pixabay.com/small-large.jpg",
+              "imageWidth": 1024,
+              "imageHeight": 768,
+              "user": "Small"
+            }
+          ]
+        }"#;
+
+        let wallpapers = map_pixabay_search(raw, "wallpaper").expect("pixabay response should map");
+
+        assert_eq!(wallpapers.len(), 1);
+        assert_eq!(wallpapers[0].id, "pixabay-195893");
     }
 
     #[test]

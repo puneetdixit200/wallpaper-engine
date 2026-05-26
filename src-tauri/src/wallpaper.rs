@@ -1,6 +1,6 @@
 use std::path::Path;
 
-#[cfg(any(target_os = "macos", target_os = "linux"))]
+#[cfg(any(target_os = "windows", target_os = "macos", target_os = "linux"))]
 use std::process::Command;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -24,6 +24,8 @@ fn set_platform_wallpaper(path: &Path) -> Result<(), String> {
     use windows_sys::Win32::UI::WindowsAndMessaging::{
         SystemParametersInfoW, SPIF_SENDWININICHANGE, SPIF_UPDATEINIFILE, SPI_SETDESKWALLPAPER,
     };
+
+    set_windows_fit_style()?;
 
     let wide_path: Vec<u16> = OsStr::new(path)
         .encode_wide()
@@ -123,6 +125,38 @@ pub fn linux_wallpaper_commands(path: &Path) -> Vec<WallpaperCommand> {
     ]
 }
 
+pub fn windows_fit_style_registry_values() -> [(&'static str, &'static str); 2] {
+    [("WallpaperStyle", "6"), ("TileWallpaper", "0")]
+}
+
+#[cfg(target_os = "windows")]
+fn set_windows_fit_style() -> Result<(), String> {
+    for (name, value) in windows_fit_style_registry_values() {
+        let status = Command::new("reg")
+            .args([
+                "add",
+                r"HKCU\Control Panel\Desktop",
+                "/v",
+                name,
+                "/t",
+                "REG_SZ",
+                "/d",
+                value,
+                "/f",
+            ])
+            .status()
+            .map_err(|error| format!("Could not set Windows wallpaper fit style: {error}"))?;
+
+        if !status.success() {
+            return Err(format!(
+                "Windows wallpaper fit style update exited with {status}"
+            ));
+        }
+    }
+
+    Ok(())
+}
+
 fn file_uri(path: &Path) -> String {
     let normalized = path.to_string_lossy().replace('\\', "/");
     format!("file://{}", encode_uri_path(&normalized))
@@ -190,5 +224,13 @@ mod tests {
         assert!(commands
             .iter()
             .any(|command| command.program == "xwallpaper"));
+    }
+
+    #[test]
+    fn windows_fit_style_uses_fit_registry_values() {
+        assert_eq!(
+            windows_fit_style_registry_values(),
+            [("WallpaperStyle", "6"), ("TileWallpaper", "0")]
+        );
     }
 }
