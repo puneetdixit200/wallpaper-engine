@@ -1,5 +1,10 @@
 import { FormEvent, useEffect, useState } from "react";
-import { CacheStats, AppSettings, ResolutionPreference } from "../types";
+import {
+  CacheStats,
+  AppSettings,
+  ResolutionPreference,
+  ThemePreference,
+} from "../types";
 
 interface SettingsPageProps {
   busy: string | null;
@@ -22,6 +27,12 @@ const resolutions: Array<{ label: string; value: ResolutionPreference }> = [
   { label: "Auto", value: "auto" },
   { label: "1080p", value: "fullHd" },
   { label: "4K", value: "fourK" },
+];
+
+const themes: Array<{ label: string; value: ThemePreference }> = [
+  { label: "System", value: "system" },
+  { label: "Light", value: "light" },
+  { label: "Dark", value: "dark" },
 ];
 
 export function SettingsPage({
@@ -104,7 +115,7 @@ export function SettingsPage({
             <input
               autoComplete="off"
               onChange={(event) => updateApiKey("wallhaven", event.currentTarget.value)}
-              placeholder="Optional for SFW search"
+              placeholder="Required for NSFW"
               type="password"
               value={draft.apiKeys.wallhaven}
             />
@@ -123,6 +134,24 @@ export function SettingsPage({
         </div>
 
         <div className="form-grid">
+          <label>
+            <span>Theme</span>
+            <select
+              onChange={(event) =>
+                updateDraft({
+                  theme: event.currentTarget.value as ThemePreference,
+                })
+              }
+              value={draft.theme}
+            >
+              {themes.map((theme) => (
+                <option key={theme.value} value={theme.value}>
+                  {theme.label}
+                </option>
+              ))}
+            </select>
+          </label>
+
           <label>
             <span>Auto-change</span>
             <select
@@ -171,6 +200,17 @@ export function SettingsPage({
             />
           </label>
         </div>
+
+        <label className="checkbox-row">
+          <input
+            checked={draft.allowNsfwWallhaven}
+            onChange={(event) =>
+              updateDraft({ allowNsfwWallhaven: event.currentTarget.checked })
+            }
+            type="checkbox"
+          />
+          <span>Allow Wallhaven NSFW</span>
+        </label>
 
         <div className="settings-actions">
           <button className="primary-button" disabled={busy === "settings"} type="submit">

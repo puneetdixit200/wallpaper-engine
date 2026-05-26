@@ -1,6 +1,19 @@
 import { Mood } from "../types";
 
-const moods: Mood[] = ["dark", "nature", "city", "minimal", "coding", "calm", "anime"];
+const moods: Mood[] = [
+  "dark",
+  "nature",
+  "city",
+  "minimal",
+  "coding",
+  "calm",
+  "anime",
+  "cyberpunk",
+  "space",
+  "gaming",
+  "fantasy",
+  "cars",
+];
 
 interface MoodBarProps {
   activeMood: Mood;

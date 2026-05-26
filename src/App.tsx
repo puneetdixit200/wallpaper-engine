@@ -198,6 +198,11 @@ function App() {
     await searchWallpapers(1, nextQuery);
   }
 
+  async function applyTopic(nextQuery: string) {
+    setQuery(nextQuery);
+    await searchWallpapers(1, nextQuery);
+  }
+
   async function applyNextFromMood() {
     const nextQuery = moodQueries[mood][0];
     const wallpapers = await runWithStatus("next", () =>
@@ -239,6 +244,7 @@ function App() {
         onSaveCurrent={() =>
           currentWallpaper ? saveFavorite(currentWallpaper) : undefined
         }
+        onTopicSelect={applyTopic}
       />
     ) : activeView === "search" ? (
       <SearchPage
@@ -272,7 +278,7 @@ function App() {
     );
 
   return (
-    <main className="app-shell">
+    <main className="app-shell" data-theme={settings.theme}>
       <aside className="sidebar">
         <div className="brand">
           <div className="brand-mark">

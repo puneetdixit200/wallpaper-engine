@@ -7,6 +7,8 @@ Small Tauri desktop app for finding, saving, caching, and applying still wallpap
 - Save Pexels, Unsplash, Pixabay, Wallhaven, and DeviantArt credentials from the Settings screen.
 - Search all supported providers together, or use one provider alone.
 - Use no-key providers for Wallhaven SFW search and Lorem Picsum placeholders.
+- Enable Wallhaven sketchy/NSFW results with a Wallhaven API key.
+- Switch between system, light, and dark themes.
 - Apply a downloaded image as the desktop wallpaper.
 - Save favorites and keep downloaded wallpapers in a local SQLite-backed cache.
 - Auto-change wallpapers while the app is running.

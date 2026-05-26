@@ -47,7 +47,15 @@ async fn search_wallpapers(
 ) -> Result<Vec<Wallpaper>, String> {
     let settings = load_settings_from_path(&state.settings_path)
         .map_err(|error| format!("Could not load settings: {error}"))?;
-    api::search_wallpapers(&state.client, &query, page, source, &settings.api_keys).await
+    api::search_wallpapers(
+        &state.client,
+        &query,
+        page,
+        source,
+        &settings.api_keys,
+        settings.allow_nsfw_wallhaven,
+    )
+    .await
 }
 
 #[tauri::command]
@@ -57,7 +65,13 @@ async fn random_wallpapers(
 ) -> Result<Vec<Wallpaper>, String> {
     let settings = load_settings_from_path(&state.settings_path)
         .map_err(|error| format!("Could not load settings: {error}"))?;
-    api::random_wallpapers(&state.client, source, &settings.api_keys).await
+    api::random_wallpapers(
+        &state.client,
+        source,
+        &settings.api_keys,
+        settings.allow_nsfw_wallhaven,
+    )
+    .await
 }
 
 #[tauri::command]
@@ -121,7 +135,14 @@ async fn apply_random_wallpaper_inner(
 ) -> Result<Wallpaper, String> {
     let settings = load_settings_from_path(&settings_path)
         .map_err(|error| format!("Could not load settings: {error}"))?;
-    match api::random_wallpapers(&client, ApiSource::All, &settings.api_keys).await {
+    match api::random_wallpapers(
+        &client,
+        ApiSource::All,
+        &settings.api_keys,
+        settings.allow_nsfw_wallhaven,
+    )
+    .await
+    {
         Ok(mut wallpapers) => {
             let wallpaper = wallpapers
                 .drain(..)

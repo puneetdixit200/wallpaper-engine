@@ -1,7 +1,7 @@
 import { convertFileSrc } from "@tauri-apps/api/core";
 import { Heart, Shuffle, SkipForward } from "lucide-react";
 import { MoodBar } from "../components/MoodBar";
-import { Mood, Wallpaper } from "../types";
+import { Mood, trendingTopics, Wallpaper } from "../types";
 
 interface HomePageProps {
   busy: string | null;
@@ -13,6 +13,7 @@ interface HomePageProps {
   onNext: () => void;
   onRandom: () => void;
   onSaveCurrent: () => void | Promise<void> | undefined;
+  onTopicSelect: (query: string) => void | Promise<void>;
 }
 
 export function HomePage({
@@ -25,6 +26,7 @@ export function HomePage({
   onNext,
   onRandom,
   onSaveCurrent,
+  onTopicSelect,
 }: HomePageProps) {
   const preview = currentWallpaper?.localPath
     ? convertFileSrc(currentWallpaper.localPath)
@@ -93,6 +95,25 @@ export function HomePage({
           <span>{mood}</span>
         </div>
         <MoodBar activeMood={mood} onMoodSelect={onMoodSelect} />
+      </section>
+
+      <section className="section-band">
+        <div className="section-title">
+          <h3>Trending</h3>
+          <span>wallpapers</span>
+        </div>
+        <div className="topic-grid" aria-label="Trending wallpaper topics">
+          {trendingTopics.map((topic) => (
+            <button
+              className="topic-chip"
+              key={topic.query}
+              onClick={() => onTopicSelect(topic.query)}
+              type="button"
+            >
+              {topic.label}
+            </button>
+          ))}
+        </div>
       </section>
 
       {notice ? <p className="notice">{notice}</p> : null}

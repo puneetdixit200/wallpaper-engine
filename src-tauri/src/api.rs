@@ -454,11 +454,13 @@ pub async fn fetch_wallhaven(
     page: u32,
     key: &str,
     random: bool,
+    allow_nsfw: bool,
 ) -> Result<Vec<Wallpaper>, String> {
     let page = page.max(1).to_string();
+    let purity = wallhaven_purity(allow_nsfw, key)?;
     let mut request = client.get("https://wallhaven.cc/api/v1/search").query(&[
         ("categories", "111"),
-        ("purity", "100"),
+        ("purity", purity),
         ("atleast", "1920x1080"),
         ("page", page.as_str()),
         ("sorting", if random { "random" } else { "relevance" }),
@@ -494,6 +496,18 @@ pub async fn fetch_wallhaven(
             query
         },
     )
+}
+
+pub fn wallhaven_purity(allow_nsfw: bool, key: &str) -> Result<&'static str, String> {
+    if !allow_nsfw {
+        return Ok("100");
+    }
+
+    if key.trim().is_empty() {
+        return Err("Wallhaven NSFW requires a Wallhaven API key. Add it in Settings.".into());
+    }
+
+    Ok("111")
 }
 
 pub async fn fetch_picsum(
@@ -573,6 +587,7 @@ pub async fn search_wallpapers(
     page: u32,
     source: ApiSource,
     keys: &ApiKeys,
+    allow_nsfw_wallhaven: bool,
 ) -> Result<Vec<Wallpaper>, String> {
     let query = query.trim();
     if query.is_empty() {
@@ -583,7 +598,17 @@ pub async fn search_wallpapers(
         ApiSource::Pexels => fetch_pexels(client, query, page, &keys.pexels).await,
         ApiSource::Unsplash => fetch_unsplash(client, query, page, &keys.unsplash).await,
         ApiSource::Pixabay => fetch_pixabay(client, query, page, &keys.pixabay).await,
-        ApiSource::Wallhaven => fetch_wallhaven(client, query, page, &keys.wallhaven, false).await,
+        ApiSource::Wallhaven => {
+            fetch_wallhaven(
+                client,
+                query,
+                page,
+                &keys.wallhaven,
+                false,
+                allow_nsfw_wallhaven,
+            )
+            .await
+        }
         ApiSource::Picsum => fetch_picsum(client, query, page).await,
         ApiSource::DeviantArt => fetch_deviantart(client, query, page, &keys.deviantart).await,
         ApiSource::ArtStation => fetch_artstation_unsupported(),
@@ -598,7 +623,17 @@ pub async fn search_wallpapers(
             if !keys.pixabay.trim().is_empty() {
                 results.push(fetch_pixabay(client, query, page, &keys.pixabay).await);
             }
-            results.push(fetch_wallhaven(client, query, page, &keys.wallhaven, false).await);
+            results.push(
+                fetch_wallhaven(
+                    client,
+                    query,
+                    page,
+                    &keys.wallhaven,
+                    false,
+                    allow_nsfw_wallhaven,
+                )
+                .await,
+            );
             results.push(fetch_picsum(client, query, page).await);
             if !keys.deviantart.trim().is_empty() {
                 results.push(fetch_deviantart(client, query, page, &keys.deviantart).await);
@@ -621,12 +656,15 @@ pub async fn random_wallpapers(
     client: &Client,
     source: ApiSource,
     keys: &ApiKeys,
+    allow_nsfw_wallhaven: bool,
 ) -> Result<Vec<Wallpaper>, String> {
     match source {
         ApiSource::Pexels => fetch_pexels_curated(client, &keys.pexels).await,
         ApiSource::Unsplash => fetch_unsplash_random(client, &keys.unsplash).await,
         ApiSource::Pixabay => fetch_pixabay(client, "wallpaper", 1, &keys.pixabay).await,
-        ApiSource::Wallhaven => fetch_wallhaven(client, "", 1, &keys.wallhaven, true).await,
+        ApiSource::Wallhaven => {
+            fetch_wallhaven(client, "", 1, &keys.wallhaven, true, allow_nsfw_wallhaven).await
+        }
         ApiSource::Picsum => fetch_picsum(client, "random", 1).await,
         ApiSource::DeviantArt => fetch_deviantart(client, "wallpaper", 1, &keys.deviantart).await,
         ApiSource::ArtStation => fetch_artstation_unsupported(),
@@ -641,7 +679,9 @@ pub async fn random_wallpapers(
             if !keys.pixabay.trim().is_empty() {
                 results.push(fetch_pixabay(client, "wallpaper", 1, &keys.pixabay).await);
             }
-            results.push(fetch_wallhaven(client, "", 1, &keys.wallhaven, true).await);
+            results.push(
+                fetch_wallhaven(client, "", 1, &keys.wallhaven, true, allow_nsfw_wallhaven).await,
+            );
             results.push(fetch_picsum(client, "random", 1).await);
             if !keys.deviantart.trim().is_empty() {
                 results.push(fetch_deviantart(client, "wallpaper", 1, &keys.deviantart).await);
@@ -833,6 +873,21 @@ mod tests {
         assert_eq!(wallpapers[0].photographer, "Wallhaven anime sfw");
         assert_eq!(wallpapers[0].width, 6742);
         assert_eq!(wallpapers[0].height, 3534);
+    }
+
+    #[test]
+    fn wallhaven_purity_stays_sfw_until_nsfw_is_allowed_with_key() {
+        assert_eq!(
+            wallhaven_purity(false, "").expect("sfw should not require a key"),
+            "100"
+        );
+        assert!(wallhaven_purity(true, "")
+            .expect_err("nsfw should require an api key")
+            .contains("Wallhaven NSFW requires"));
+        assert_eq!(
+            wallhaven_purity(true, "wallhaven-key").expect("key should allow nsfw"),
+            "111"
+        );
     }
 
     #[test]

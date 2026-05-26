@@ -26,6 +26,14 @@ pub enum ResolutionPreference {
     FourK,
 }
 
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub enum ThemePreference {
+    System,
+    Light,
+    Dark,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub struct AppSettings {
@@ -33,6 +41,10 @@ pub struct AppSettings {
     pub auto_change_minutes: u64,
     pub resolution: ResolutionPreference,
     pub cache_limit_mb: u64,
+    #[serde(default)]
+    pub allow_nsfw_wallhaven: bool,
+    #[serde(default)]
+    pub theme: ThemePreference,
 }
 
 impl Default for ApiKeys {
@@ -54,7 +66,15 @@ impl Default for AppSettings {
             auto_change_minutes: 0,
             resolution: ResolutionPreference::Auto,
             cache_limit_mb: 1024,
+            allow_nsfw_wallhaven: false,
+            theme: ThemePreference::System,
         }
+    }
+}
+
+impl Default for ThemePreference {
+    fn default() -> Self {
+        Self::System
     }
 }
 
@@ -130,6 +150,8 @@ mod tests {
                 wallhaven: "wallhaven-key".into(),
                 deviantart: "deviantart-token".into(),
             },
+            allow_nsfw_wallhaven: true,
+            theme: ThemePreference::Dark,
             ..AppSettings::default()
         };
 
@@ -141,6 +163,8 @@ mod tests {
         assert_eq!(loaded.api_keys.pixabay, "pixabay-key");
         assert_eq!(loaded.api_keys.wallhaven, "wallhaven-key");
         assert_eq!(loaded.api_keys.deviantart, "deviantart-token");
+        assert!(loaded.allow_nsfw_wallhaven);
+        assert_eq!(loaded.theme, ThemePreference::Dark);
 
         let _ = fs::remove_file(path);
     }
@@ -159,5 +183,7 @@ mod tests {
         assert_eq!(loaded.resolution, ResolutionPreference::Auto);
         assert_eq!(loaded.auto_change_minutes, 0);
         assert_eq!(loaded.cache_limit_mb, 1024);
+        assert!(!loaded.allow_nsfw_wallhaven);
+        assert_eq!(loaded.theme, ThemePreference::System);
     }
 }

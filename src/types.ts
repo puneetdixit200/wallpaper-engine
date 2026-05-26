@@ -10,6 +10,7 @@ export type ApiSource =
   | "artStation"
   | "both";
 export type ResolutionPreference = "auto" | "fullHd" | "fourK";
+export type ThemePreference = "system" | "light" | "dark";
 
 export type Mood =
   | "dark"
@@ -18,7 +19,12 @@ export type Mood =
   | "minimal"
   | "coding"
   | "calm"
-  | "anime";
+  | "anime"
+  | "cyberpunk"
+  | "space"
+  | "gaming"
+  | "fantasy"
+  | "cars";
 
 export interface ApiKeys {
   pexels: string;
@@ -33,6 +39,8 @@ export interface AppSettings {
   autoChangeMinutes: number;
   resolution: ResolutionPreference;
   cacheLimitMb: number;
+  allowNsfwWallhaven: boolean;
+  theme: ThemePreference;
 }
 
 export interface Wallpaper {
@@ -69,6 +77,8 @@ export const defaultSettings: AppSettings = {
   autoChangeMinutes: 0,
   resolution: "auto",
   cacheLimitMb: 1024,
+  allowNsfwWallhaven: false,
+  theme: "system",
 };
 
 export const moodQueries: Record<Mood, string[]> = {
@@ -79,4 +89,22 @@ export const moodQueries: Record<Mood, string[]> = {
   coding: ["dark workspace", "terminal aesthetic", "neon dark"],
   calm: ["zen nature", "soft pastel", "peaceful landscape"],
   anime: ["anime landscape", "anime scenery", "painted landscape"],
+  cyberpunk: ["cyberpunk city", "neon street", "futuristic skyline"],
+  space: ["space nebula", "galaxy wallpaper", "astronaut landscape"],
+  gaming: ["gaming setup", "neon gaming", "game landscape"],
+  fantasy: ["fantasy castle", "dragon landscape", "magic forest"],
+  cars: ["supercar night", "jdm car", "sports car wallpaper"],
 };
+
+export const trendingTopics = [
+  { label: "4K anime city", query: "4k anime city" },
+  { label: "cyberpunk neon", query: "cyberpunk neon city" },
+  { label: "space nebula", query: "space nebula 4k" },
+  { label: "supercar night", query: "supercar night wallpaper" },
+  { label: "cozy rain", query: "cozy rainy window" },
+  { label: "fantasy world", query: "fantasy landscape 4k" },
+  { label: "minimal dark", query: "minimal dark wallpaper" },
+  { label: "ultrawide nature", query: "ultrawide nature wallpaper" },
+  { label: "gaming setup", query: "gaming setup neon" },
+  { label: "cinematic mountains", query: "cinematic mountain landscape" },
+];
