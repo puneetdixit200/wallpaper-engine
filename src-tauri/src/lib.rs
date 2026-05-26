@@ -12,6 +12,7 @@ use settings::{
 };
 use std::fs;
 use std::path::PathBuf;
+use std::sync::Arc;
 use tauri::async_runtime::{JoinHandle, Mutex};
 use tauri::{Manager, State};
 
@@ -21,6 +22,7 @@ pub struct AppState {
     db_path: PathBuf,
     cache_dir: PathBuf,
     scheduler: Mutex<Option<JoinHandle<()>>>,
+    wallpaper_lock: Arc<Mutex<Option<wallpaper::WallpaperLock>>>,
 }
 
 #[tauri::command]
@@ -84,14 +86,16 @@ async fn set_wallpaper(
 ) -> Result<Wallpaper, String> {
     let settings = load_settings_from_path(&state.settings_path)
         .map_err(|error| format!("Could not load settings: {error}"))?;
-    set_wallpaper_inner(
+    let wallpaper = set_wallpaper_inner(
         &state.client,
         &state.cache_dir,
         &state.db_path,
         wallpaper,
         settings.wallpaper_layout,
     )
-    .await
+    .await?;
+    remember_locked_wallpaper(&state.wallpaper_lock, &wallpaper, settings.wallpaper_layout).await;
+    Ok(wallpaper)
 }
 
 #[tauri::command]
@@ -123,13 +127,17 @@ fn clear_library(state: State<'_, AppState>) -> Result<Library, String> {
 
 #[tauri::command]
 async fn apply_random_wallpaper(state: State<'_, AppState>) -> Result<Wallpaper, String> {
-    apply_random_wallpaper_inner(
+    let wallpaper = apply_random_wallpaper_inner(
         state.client.clone(),
         state.settings_path.clone(),
         state.db_path.clone(),
         state.cache_dir.clone(),
     )
-    .await
+    .await?;
+    let settings = load_settings_from_path(&state.settings_path)
+        .map_err(|error| format!("Could not load settings: {error}"))?;
+    remember_locked_wallpaper(&state.wallpaper_lock, &wallpaper, settings.wallpaper_layout).await;
+    Ok(wallpaper)
 }
 
 async fn set_wallpaper_inner(
@@ -220,23 +228,72 @@ async fn restart_scheduler(
     let settings_path = state.settings_path.clone();
     let db_path = state.db_path.clone();
     let cache_dir = state.cache_dir.clone();
+    let wallpaper_lock = state.wallpaper_lock.clone();
     let interval = std::time::Duration::from_secs(interval_minutes * 60);
 
     *scheduler = Some(tauri::async_runtime::spawn(async move {
         let mut timer = tokio::time::interval(interval);
         loop {
             timer.tick().await;
-            let _ = apply_random_wallpaper_inner(
+            if let Ok(wallpaper) = apply_random_wallpaper_inner(
                 client.clone(),
                 settings_path.clone(),
                 db_path.clone(),
                 cache_dir.clone(),
             )
-            .await;
+            .await
+            {
+                if let Ok(settings) = load_settings_from_path(&settings_path) {
+                    remember_locked_wallpaper(
+                        &wallpaper_lock,
+                        &wallpaper,
+                        settings.wallpaper_layout,
+                    )
+                    .await;
+                }
+            }
         }
     }));
 
     Ok(())
+}
+
+async fn remember_locked_wallpaper(
+    wallpaper_lock: &Arc<Mutex<Option<wallpaper::WallpaperLock>>>,
+    wallpaper: &Wallpaper,
+    layout: WallpaperLayoutPreference,
+) {
+    if let Some(local_path) = wallpaper.local_path.as_deref() {
+        let mut lock = wallpaper_lock.lock().await;
+        *lock = Some(wallpaper::WallpaperLock {
+            path: PathBuf::from(local_path),
+            layout,
+        });
+    }
+}
+
+fn start_wallpaper_guard(wallpaper_lock: Arc<Mutex<Option<wallpaper::WallpaperLock>>>) {
+    #[cfg(target_os = "windows")]
+    {
+        tauri::async_runtime::spawn(async move {
+            let mut timer = tokio::time::interval(std::time::Duration::from_secs(5));
+            loop {
+                timer.tick().await;
+                let lock = wallpaper_lock.lock().await.clone();
+                if let Some(lock) = lock {
+                    let current = wallpaper::current_desktop_wallpaper().ok().flatten();
+                    let _ = wallpaper::restore_locked_wallpaper_if_needed(
+                        &lock,
+                        current,
+                        wallpaper::set_desktop_wallpaper,
+                    );
+                }
+            }
+        });
+    }
+
+    #[cfg(not(target_os = "windows"))]
+    let _ = wallpaper_lock;
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -251,16 +308,25 @@ pub fn run() {
             fs::create_dir_all(&data_dir)?;
             fs::create_dir_all(&cache_dir)?;
 
+            let settings_path = settings_path(&config_dir);
+            let settings = load_settings_from_path(&settings_path).unwrap_or_default();
             let db_path = data_dir.join("wallpapers.sqlite3");
             cache::init_database(&db_path)
                 .map_err(|error| Box::<dyn std::error::Error>::from(error))?;
+            let wallpaper_lock =
+                Arc::new(Mutex::new(wallpaper::wallpaper_lock_from_current_desktop(
+                    wallpaper::current_desktop_wallpaper().ok().flatten(),
+                    settings.wallpaper_layout,
+                )));
+            start_wallpaper_guard(wallpaper_lock.clone());
 
             app.manage(AppState {
                 client: Client::new(),
-                settings_path: settings_path(&config_dir),
+                settings_path,
                 db_path,
                 cache_dir,
                 scheduler: Mutex::new(None),
+                wallpaper_lock,
             });
             Ok(())
         })

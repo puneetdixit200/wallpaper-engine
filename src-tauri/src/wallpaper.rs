@@ -12,12 +12,82 @@ pub struct WallpaperCommand {
     pub args: Vec<String>,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct WallpaperLock {
+    pub path: PathBuf,
+    pub layout: WallpaperLayoutPreference,
+}
+
 pub fn set_desktop_wallpaper(path: &Path, layout: WallpaperLayoutPreference) -> Result<(), String> {
     if !path.exists() {
         return Err(format!("Wallpaper file does not exist: {}", path.display()));
     }
 
     set_platform_wallpaper(path, layout)
+}
+
+pub fn restore_locked_wallpaper_if_needed<F>(
+    lock: &WallpaperLock,
+    current_wallpaper: Option<PathBuf>,
+    set_wallpaper: F,
+) -> Result<bool, String>
+where
+    F: FnOnce(&Path, WallpaperLayoutPreference) -> Result<(), String>,
+{
+    if current_wallpaper
+        .as_deref()
+        .is_some_and(|current| wallpaper_paths_match(current, &lock.path))
+    {
+        return Ok(false);
+    }
+
+    set_wallpaper(&lock.path, lock.layout)?;
+    Ok(true)
+}
+
+pub fn wallpaper_lock_from_current_desktop(
+    current_wallpaper: Option<PathBuf>,
+    layout: WallpaperLayoutPreference,
+) -> Option<WallpaperLock> {
+    current_wallpaper.map(|path| WallpaperLock { path, layout })
+}
+
+#[cfg(target_os = "windows")]
+pub fn current_desktop_wallpaper() -> Result<Option<PathBuf>, String> {
+    use windows_sys::Win32::UI::WindowsAndMessaging::{
+        SystemParametersInfoW, SPI_GETDESKWALLPAPER,
+    };
+
+    let mut buffer = vec![0_u16; 32_768];
+    let result = unsafe {
+        SystemParametersInfoW(
+            SPI_GETDESKWALLPAPER,
+            buffer.len() as u32,
+            buffer.as_mut_ptr() as *mut core::ffi::c_void,
+            0,
+        )
+    };
+
+    if result == 0 {
+        return Err("Windows rejected the wallpaper read.".into());
+    }
+
+    let length = buffer
+        .iter()
+        .position(|value| *value == 0)
+        .unwrap_or(buffer.len());
+    if length == 0 {
+        Ok(None)
+    } else {
+        Ok(Some(PathBuf::from(String::from_utf16_lossy(
+            &buffer[..length],
+        ))))
+    }
+}
+
+#[cfg(not(target_os = "windows"))]
+pub fn current_desktop_wallpaper() -> Result<Option<PathBuf>, String> {
+    Ok(None)
 }
 
 pub fn prepare_wallpaper_for_screen(path: &Path, cache_dir: &Path) -> PathBuf {
@@ -256,6 +326,19 @@ fn safe_file_stem(value: &str) -> String {
     }
 }
 
+fn wallpaper_paths_match(left: &Path, right: &Path) -> bool {
+    normalize_wallpaper_path(left) == normalize_wallpaper_path(right)
+}
+
+fn normalize_wallpaper_path(path: &Path) -> String {
+    let normalized = path.to_string_lossy().replace('\\', "/");
+    if cfg!(target_os = "windows") {
+        normalized.to_ascii_lowercase()
+    } else {
+        normalized
+    }
+}
+
 #[cfg(target_os = "windows")]
 fn set_windows_wallpaper_style(layout: WallpaperLayoutPreference) -> Result<(), String> {
     for (name, value) in windows_layout_registry_values(layout) {
@@ -416,5 +499,74 @@ mod tests {
         assert_eq!(resized_image.dimensions(), (200, 100));
 
         let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn wallpaper_lock_restores_when_current_wallpaper_differs() {
+        let locked = WallpaperLock {
+            path: PathBuf::from("C:\\Wallpapers\\app-wallpaper.jpg"),
+            layout: WallpaperLayoutPreference::Fit,
+        };
+        let mut applied = Vec::new();
+
+        let restored = restore_locked_wallpaper_if_needed(
+            &locked,
+            Some(PathBuf::from(
+                "C:\\Windows\\Web\\Wallpaper\\Windows\\img0.jpg",
+            )),
+            |path, layout| {
+                applied.push((path.to_path_buf(), layout));
+                Ok(())
+            },
+        )
+        .expect("wallpaper lock should restore");
+
+        assert!(restored);
+        assert_eq!(
+            applied,
+            vec![(locked.path.clone(), WallpaperLayoutPreference::Fit)]
+        );
+    }
+
+    #[test]
+    fn wallpaper_lock_does_not_restore_when_current_wallpaper_matches() {
+        let locked = WallpaperLock {
+            path: PathBuf::from("C:\\Wallpapers\\app-wallpaper.jpg"),
+            layout: WallpaperLayoutPreference::Fit,
+        };
+        let mut applied = Vec::new();
+
+        let restored = restore_locked_wallpaper_if_needed(
+            &locked,
+            Some(PathBuf::from("C:\\Wallpapers\\app-wallpaper.jpg")),
+            |path, layout| {
+                applied.push((path.to_path_buf(), layout));
+                Ok(())
+            },
+        )
+        .expect("wallpaper lock should not restore");
+
+        assert!(!restored);
+        assert!(applied.is_empty());
+    }
+
+    #[test]
+    fn wallpaper_lock_can_start_from_current_desktop_wallpaper() {
+        let current = PathBuf::from("C:\\Wallpapers\\current.jpg");
+
+        assert_eq!(
+            wallpaper_lock_from_current_desktop(
+                Some(current.clone()),
+                WallpaperLayoutPreference::Fill
+            ),
+            Some(WallpaperLock {
+                path: current,
+                layout: WallpaperLayoutPreference::Fill
+            })
+        );
+        assert_eq!(
+            wallpaper_lock_from_current_desktop(None, WallpaperLayoutPreference::Fill),
+            None
+        );
     }
 }
