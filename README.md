@@ -11,6 +11,7 @@ Small Tauri desktop app for finding, saving, caching, and applying still wallpap
 - Switch between system, light, and dark themes.
 - Apply a downloaded image as the desktop wallpaper.
 - Apply wallpapers with Fill, Fit, Stretch, Tile, Center, or Span layout on Windows.
+- Downsize oversized wallpapers into a screen-sized cached copy before applying them.
 - Filter provider results to desktop-sized landscape wallpapers.
 - Save favorites and keep downloaded wallpapers in a local SQLite-backed cache.
 - Auto-change wallpapers while the app is running.

@@ -140,9 +140,10 @@ async fn set_wallpaper_inner(
     layout: WallpaperLayoutPreference,
 ) -> Result<Wallpaper, String> {
     let local_path = cache::download_wallpaper(client, cache_dir, &wallpaper).await?;
-    wallpaper::set_desktop_wallpaper(&local_path, layout)?;
-    cache::record_wallpaper_used(db_path, &wallpaper, &local_path)?;
-    wallpaper.local_path = Some(local_path.to_string_lossy().to_string());
+    let screen_path = wallpaper::prepare_wallpaper_for_screen(&local_path, cache_dir);
+    wallpaper::set_desktop_wallpaper(&screen_path, layout)?;
+    cache::record_wallpaper_used(db_path, &wallpaper, &screen_path)?;
+    wallpaper.local_path = Some(screen_path.to_string_lossy().to_string());
     Ok(wallpaper)
 }
 
@@ -178,20 +179,21 @@ async fn apply_random_wallpaper_inner(
         }
         Err(error) => {
             if let Some(path) = cache::random_cached_wallpaper(&db_path)? {
-                wallpaper::set_desktop_wallpaper(&path, settings.wallpaper_layout)?;
+                let screen_path = wallpaper::prepare_wallpaper_for_screen(&path, &cache_dir);
+                wallpaper::set_desktop_wallpaper(&screen_path, settings.wallpaper_layout)?;
                 Ok(Wallpaper {
-                    id: path
+                    id: screen_path
                         .file_stem()
                         .map(|stem| stem.to_string_lossy().to_string())
                         .unwrap_or_else(|| "cached-wallpaper".into()),
                     source: "cache".into(),
                     thumb_url: String::new(),
-                    full_url: path.to_string_lossy().to_string(),
+                    full_url: screen_path.to_string_lossy().to_string(),
                     photographer: "Local cache".into(),
                     width: 0,
                     height: 0,
                     query_used: Some("cache".into()),
-                    local_path: Some(path.to_string_lossy().to_string()),
+                    local_path: Some(screen_path.to_string_lossy().to_string()),
                     is_favorite: false,
                 })
             } else {
