@@ -6,6 +6,7 @@ import {
   ThemePreference,
   WallpaperLayoutPreference,
 } from "../types";
+import { parseAutoChangeMinutes } from "../settingsFlow";
 
 interface SettingsPageProps {
   busy: string | null;
@@ -14,15 +15,6 @@ interface SettingsPageProps {
   onClearCache: () => void;
   onSave: (settings: AppSettings) => void;
 }
-
-const intervals = [
-  { label: "Off", value: 0 },
-  { label: "15 min", value: 15 },
-  { label: "30 min", value: 30 },
-  { label: "1 hr", value: 60 },
-  { label: "2 hr", value: 120 },
-  { label: "6 hr", value: 360 },
-];
 
 const resolutions: Array<{ label: string; value: ResolutionPreference }> = [
   { label: "Auto", value: "auto" },
@@ -185,19 +177,21 @@ export function SettingsPage({
           </label>
 
           <label>
-            <span>Auto-change</span>
-            <select
+            <span>Auto-change minutes</span>
+            <input
+              min={0}
+              max={1440}
               onChange={(event) =>
-                updateDraft({ autoChangeMinutes: Number(event.currentTarget.value) })
+                updateDraft({
+                  autoChangeMinutes: parseAutoChangeMinutes(
+                    event.currentTarget.value,
+                  ),
+                })
               }
+              step={1}
+              type="number"
               value={draft.autoChangeMinutes}
-            >
-              {intervals.map((interval) => (
-                <option key={interval.value} value={interval.value}>
-                  {interval.label}
-                </option>
-              ))}
-            </select>
+            />
           </label>
 
           <label>

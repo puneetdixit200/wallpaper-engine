@@ -15,7 +15,7 @@ Small Tauri desktop app for finding, saving, caching, and applying still wallpap
 - Keep the active wallpaper locked while the app runs so Windows slideshow/theme changes are overwritten.
 - Filter provider results to desktop-sized landscape wallpapers.
 - Save favorites and keep downloaded wallpapers in a local SQLite-backed cache.
-- Auto-change wallpapers while the app is running.
+- Auto-change wallpapers on a custom minute interval while the app is running.
 - Build bundles for Windows, Linux, and macOS through GitHub Actions.
 
 ## Development

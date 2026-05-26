@@ -106,10 +106,7 @@ impl AppSettings {
         self.api_keys.wallhaven = self.api_keys.wallhaven.trim().to_string();
         self.api_keys.deviantart = self.api_keys.deviantart.trim().to_string();
         self.cache_limit_mb = self.cache_limit_mb.clamp(128, 10_240);
-        self.auto_change_minutes = match self.auto_change_minutes {
-            0 | 15 | 30 | 60 | 120 | 360 => self.auto_change_minutes,
-            _ => 0,
-        };
+        self.auto_change_minutes = self.auto_change_minutes.min(1_440);
         self
     }
 }
@@ -208,5 +205,31 @@ mod tests {
         assert!(!loaded.allow_nsfw_wallhaven);
         assert_eq!(loaded.theme, ThemePreference::System);
         assert_eq!(loaded.wallpaper_layout, WallpaperLayoutPreference::Fit);
+    }
+
+    #[test]
+    fn custom_auto_change_minutes_are_preserved_within_bounds() {
+        let path = temp_settings_path("custom-auto-change");
+        let settings = AppSettings {
+            auto_change_minutes: 7,
+            ..AppSettings::default()
+        };
+
+        save_settings_to_path(&path, &settings).expect("settings should save");
+        let loaded = load_settings_from_path(&path).expect("settings should load");
+
+        assert_eq!(loaded.auto_change_minutes, 7);
+
+        let _ = fs::remove_file(path);
+    }
+
+    #[test]
+    fn auto_change_minutes_are_clamped_to_one_day() {
+        let settings = AppSettings {
+            auto_change_minutes: 20_000,
+            ..AppSettings::default()
+        };
+
+        assert_eq!(settings.sanitized().auto_change_minutes, 1_440);
     }
 }
