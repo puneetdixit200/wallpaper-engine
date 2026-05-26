@@ -230,6 +230,17 @@ function App() {
     }
   }
 
+  async function clearLibrary() {
+    const nextLibrary = await runWithStatus(
+      "clear-library",
+      () => invoke<Library>("clear_library"),
+      "Library cleared.",
+    );
+    if (nextLibrary) {
+      setLibrary(nextLibrary);
+    }
+  }
+
   const content =
     activeView === "home" ? (
       <HomePage
@@ -264,6 +275,7 @@ function App() {
       <LibraryPage
         busy={busy}
         library={library}
+        onClearLibrary={clearLibrary}
         onSetWallpaper={setWallpaper}
         onSaveFavorite={saveFavorite}
       />

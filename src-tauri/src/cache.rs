@@ -129,6 +129,16 @@ pub fn list_library(db_path: &Path) -> Result<Library, String> {
     })
 }
 
+pub fn clear_library(db_path: &Path) -> Result<(), String> {
+    init_database(db_path)?;
+    let connection = Connection::open(db_path)
+        .map_err(|error| format!("Could not open wallpaper database: {error}"))?;
+    connection
+        .execute("DELETE FROM wallpapers", [])
+        .map_err(|error| format!("Could not clear library: {error}"))?;
+    Ok(())
+}
+
 fn query_wallpapers(db_path: &Path, clause: &str) -> Result<Vec<Wallpaper>, String> {
     let connection = Connection::open(db_path)
         .map_err(|error| format!("Could not open wallpaper database: {error}"))?;
@@ -341,6 +351,25 @@ mod tests {
             library.downloaded[0].local_path.as_deref(),
             Some(local_path.to_string_lossy().as_ref())
         );
+
+        let _ = std::fs::remove_file(db_path);
+    }
+
+    #[test]
+    fn clears_library_metadata() {
+        let db_path = temp_path("clear-library", "sqlite3");
+        let local_path = temp_path("clear-library-wallpaper", "jpg");
+        init_database(&db_path).expect("database should initialize");
+
+        save_favorite(&db_path, &sample_wallpaper()).expect("favorite should save");
+        upsert_downloaded_wallpaper(&db_path, &sample_wallpaper(), &local_path)
+            .expect("download should upsert");
+
+        clear_library(&db_path).expect("library should clear");
+        let library = list_library(&db_path).expect("library should list");
+
+        assert!(library.favorites.is_empty());
+        assert!(library.downloaded.is_empty());
 
         let _ = std::fs::remove_file(db_path);
     }

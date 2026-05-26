@@ -4,6 +4,7 @@ import { Library, Wallpaper } from "../types";
 interface LibraryPageProps {
   busy: string | null;
   library: Library;
+  onClearLibrary: () => void;
   onSetWallpaper: (wallpaper: Wallpaper) => void;
   onSaveFavorite: (wallpaper: Wallpaper) => void;
 }
@@ -11,9 +12,13 @@ interface LibraryPageProps {
 export function LibraryPage({
   busy,
   library,
+  onClearLibrary,
   onSetWallpaper,
   onSaveFavorite,
 }: LibraryPageProps) {
+  const hasLibraryItems =
+    library.favorites.length > 0 || library.downloaded.length > 0;
+
   return (
     <div className="view-stack">
       <header className="view-header">
@@ -21,6 +26,14 @@ export function LibraryPage({
           <p className="eyebrow">Library</p>
           <h2>Saved and downloaded wallpapers</h2>
         </div>
+        <button
+          className="secondary-button"
+          disabled={!hasLibraryItems || busy === "clear-library"}
+          onClick={onClearLibrary}
+          type="button"
+        >
+          Clear library
+        </button>
       </header>
 
       <section className="section-band">
