@@ -280,3 +280,33 @@ pub fn run() {
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
 }
+
+#[cfg(test)]
+mod config_tests {
+    use serde_json::Value;
+
+    #[test]
+    fn asset_protocol_allows_cached_wallpaper_previews() {
+        let config: Value =
+            serde_json::from_str(include_str!("../tauri.conf.json")).expect("config is valid JSON");
+        let asset_protocol = config
+            .pointer("/app/security/assetProtocol")
+            .expect("asset protocol is configured for local wallpaper previews");
+
+        assert_eq!(
+            asset_protocol.get("enable").and_then(Value::as_bool),
+            Some(true)
+        );
+        let scope = asset_protocol
+            .get("scope")
+            .and_then(Value::as_array)
+            .expect("asset protocol has a scope");
+
+        assert!(
+            scope
+                .iter()
+                .any(|entry| entry.as_str() == Some("$APPCACHE/wallpapers/**")),
+            "asset protocol scope allows cached wallpapers"
+        );
+    }
+}
