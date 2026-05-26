@@ -10,7 +10,7 @@ Small Tauri desktop app for finding, saving, caching, and applying still wallpap
 - Enable Wallhaven sketchy/NSFW results with a Wallhaven API key.
 - Switch between system, light, and dark themes.
 - Apply a downloaded image as the desktop wallpaper.
-- Apply wallpapers with the desktop set to fit the screen on Windows.
+- Apply wallpapers with Fill, Fit, Stretch, Tile, Center, or Span layout on Windows.
 - Filter provider results to desktop-sized landscape wallpapers.
 - Save favorites and keep downloaded wallpapers in a local SQLite-backed cache.
 - Auto-change wallpapers while the app is running.

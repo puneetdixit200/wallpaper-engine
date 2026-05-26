@@ -34,6 +34,17 @@ pub enum ThemePreference {
     Dark,
 }
 
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub enum WallpaperLayoutPreference {
+    Fill,
+    Fit,
+    Stretch,
+    Tile,
+    Center,
+    Span,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub struct AppSettings {
@@ -45,6 +56,8 @@ pub struct AppSettings {
     pub allow_nsfw_wallhaven: bool,
     #[serde(default)]
     pub theme: ThemePreference,
+    #[serde(default)]
+    pub wallpaper_layout: WallpaperLayoutPreference,
 }
 
 impl Default for ApiKeys {
@@ -68,6 +81,7 @@ impl Default for AppSettings {
             cache_limit_mb: 1024,
             allow_nsfw_wallhaven: false,
             theme: ThemePreference::System,
+            wallpaper_layout: WallpaperLayoutPreference::Fit,
         }
     }
 }
@@ -75,6 +89,12 @@ impl Default for AppSettings {
 impl Default for ThemePreference {
     fn default() -> Self {
         Self::System
+    }
+}
+
+impl Default for WallpaperLayoutPreference {
+    fn default() -> Self {
+        Self::Fit
     }
 }
 
@@ -152,6 +172,7 @@ mod tests {
             },
             allow_nsfw_wallhaven: true,
             theme: ThemePreference::Dark,
+            wallpaper_layout: WallpaperLayoutPreference::Span,
             ..AppSettings::default()
         };
 
@@ -165,6 +186,7 @@ mod tests {
         assert_eq!(loaded.api_keys.deviantart, "deviantart-token");
         assert!(loaded.allow_nsfw_wallhaven);
         assert_eq!(loaded.theme, ThemePreference::Dark);
+        assert_eq!(loaded.wallpaper_layout, WallpaperLayoutPreference::Span);
 
         let _ = fs::remove_file(path);
     }
@@ -185,5 +207,6 @@ mod tests {
         assert_eq!(loaded.cache_limit_mb, 1024);
         assert!(!loaded.allow_nsfw_wallhaven);
         assert_eq!(loaded.theme, ThemePreference::System);
+        assert_eq!(loaded.wallpaper_layout, WallpaperLayoutPreference::Fit);
     }
 }

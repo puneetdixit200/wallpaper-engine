@@ -1,3 +1,4 @@
+use crate::settings::WallpaperLayoutPreference;
 use std::path::Path;
 
 #[cfg(any(target_os = "windows", target_os = "macos", target_os = "linux"))]
@@ -9,23 +10,23 @@ pub struct WallpaperCommand {
     pub args: Vec<String>,
 }
 
-pub fn set_desktop_wallpaper(path: &Path) -> Result<(), String> {
+pub fn set_desktop_wallpaper(path: &Path, layout: WallpaperLayoutPreference) -> Result<(), String> {
     if !path.exists() {
         return Err(format!("Wallpaper file does not exist: {}", path.display()));
     }
 
-    set_platform_wallpaper(path)
+    set_platform_wallpaper(path, layout)
 }
 
 #[cfg(target_os = "windows")]
-fn set_platform_wallpaper(path: &Path) -> Result<(), String> {
+fn set_platform_wallpaper(path: &Path, layout: WallpaperLayoutPreference) -> Result<(), String> {
     use std::ffi::OsStr;
     use std::os::windows::ffi::OsStrExt;
     use windows_sys::Win32::UI::WindowsAndMessaging::{
         SystemParametersInfoW, SPIF_SENDWININICHANGE, SPIF_UPDATEINIFILE, SPI_SETDESKWALLPAPER,
     };
 
-    set_windows_fit_style()?;
+    set_windows_wallpaper_style(layout)?;
 
     let wide_path: Vec<u16> = OsStr::new(path)
         .encode_wide()
@@ -48,7 +49,7 @@ fn set_platform_wallpaper(path: &Path) -> Result<(), String> {
 }
 
 #[cfg(target_os = "macos")]
-fn set_platform_wallpaper(path: &Path) -> Result<(), String> {
+fn set_platform_wallpaper(path: &Path, _layout: WallpaperLayoutPreference) -> Result<(), String> {
     let script = format!(
         "tell application \"System Events\" to set picture of every desktop to \"{}\"",
         escape_osascript_path(path)
@@ -60,7 +61,7 @@ fn set_platform_wallpaper(path: &Path) -> Result<(), String> {
 }
 
 #[cfg(target_os = "linux")]
-fn set_platform_wallpaper(path: &Path) -> Result<(), String> {
+fn set_platform_wallpaper(path: &Path, _layout: WallpaperLayoutPreference) -> Result<(), String> {
     let mut failures = Vec::new();
 
     for command in linux_wallpaper_commands(path) {
@@ -84,7 +85,7 @@ fn set_platform_wallpaper(path: &Path) -> Result<(), String> {
 }
 
 #[cfg(not(any(target_os = "windows", target_os = "macos", target_os = "linux")))]
-fn set_platform_wallpaper(_path: &Path) -> Result<(), String> {
+fn set_platform_wallpaper(_path: &Path, _layout: WallpaperLayoutPreference) -> Result<(), String> {
     Err("Wallpaper changes are not supported on this operating system.".into())
 }
 
@@ -125,13 +126,24 @@ pub fn linux_wallpaper_commands(path: &Path) -> Vec<WallpaperCommand> {
     ]
 }
 
-pub fn windows_fit_style_registry_values() -> [(&'static str, &'static str); 2] {
-    [("WallpaperStyle", "6"), ("TileWallpaper", "0")]
+pub fn windows_layout_registry_values(
+    layout: WallpaperLayoutPreference,
+) -> [(&'static str, &'static str); 2] {
+    let (style, tile) = match layout {
+        WallpaperLayoutPreference::Fill => ("10", "0"),
+        WallpaperLayoutPreference::Fit => ("6", "0"),
+        WallpaperLayoutPreference::Stretch => ("2", "0"),
+        WallpaperLayoutPreference::Tile => ("0", "1"),
+        WallpaperLayoutPreference::Center => ("0", "0"),
+        WallpaperLayoutPreference::Span => ("22", "0"),
+    };
+
+    [("WallpaperStyle", style), ("TileWallpaper", tile)]
 }
 
 #[cfg(target_os = "windows")]
-fn set_windows_fit_style() -> Result<(), String> {
-    for (name, value) in windows_fit_style_registry_values() {
+fn set_windows_wallpaper_style(layout: WallpaperLayoutPreference) -> Result<(), String> {
+    for (name, value) in windows_layout_registry_values(layout) {
         let status = Command::new("reg")
             .args([
                 "add",
@@ -227,10 +239,21 @@ mod tests {
     }
 
     #[test]
-    fn windows_fit_style_uses_fit_registry_values() {
-        assert_eq!(
-            windows_fit_style_registry_values(),
-            [("WallpaperStyle", "6"), ("TileWallpaper", "0")]
-        );
+    fn windows_layouts_use_windows_personalization_registry_values() {
+        let cases = [
+            (WallpaperLayoutPreference::Fill, "10", "0"),
+            (WallpaperLayoutPreference::Fit, "6", "0"),
+            (WallpaperLayoutPreference::Stretch, "2", "0"),
+            (WallpaperLayoutPreference::Tile, "0", "1"),
+            (WallpaperLayoutPreference::Center, "0", "0"),
+            (WallpaperLayoutPreference::Span, "22", "0"),
+        ];
+
+        for (layout, style, tile) in cases {
+            assert_eq!(
+                windows_layout_registry_values(layout),
+                [("WallpaperStyle", style), ("TileWallpaper", tile)]
+            );
+        }
     }
 }

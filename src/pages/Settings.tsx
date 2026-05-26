@@ -4,6 +4,7 @@ import {
   AppSettings,
   ResolutionPreference,
   ThemePreference,
+  WallpaperLayoutPreference,
 } from "../types";
 
 interface SettingsPageProps {
@@ -33,6 +34,18 @@ const themes: Array<{ label: string; value: ThemePreference }> = [
   { label: "System", value: "system" },
   { label: "Light", value: "light" },
   { label: "Dark", value: "dark" },
+];
+
+const wallpaperLayouts: Array<{
+  label: string;
+  value: WallpaperLayoutPreference;
+}> = [
+  { label: "Fill", value: "fill" },
+  { label: "Fit", value: "fit" },
+  { label: "Stretch", value: "stretch" },
+  { label: "Tile", value: "tile" },
+  { label: "Center", value: "center" },
+  { label: "Span", value: "span" },
 ];
 
 export function SettingsPage({
@@ -147,6 +160,25 @@ export function SettingsPage({
               {themes.map((theme) => (
                 <option key={theme.value} value={theme.value}>
                   {theme.label}
+                </option>
+              ))}
+            </select>
+          </label>
+
+          <label>
+            <span>Wallpaper layout</span>
+            <select
+              onChange={(event) =>
+                updateDraft({
+                  wallpaperLayout: event.currentTarget
+                    .value as WallpaperLayoutPreference,
+                })
+              }
+              value={draft.wallpaperLayout}
+            >
+              {wallpaperLayouts.map((layout) => (
+                <option key={layout.value} value={layout.value}>
+                  {layout.label}
                 </option>
               ))}
             </select>

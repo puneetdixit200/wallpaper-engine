@@ -6,7 +6,10 @@ pub mod wallpaper;
 
 use models::{ApiSource, CacheStats, Library, Wallpaper};
 use reqwest::Client;
-use settings::{load_settings_from_path, save_settings_to_path, settings_path, AppSettings};
+use settings::{
+    load_settings_from_path, save_settings_to_path, settings_path, AppSettings,
+    WallpaperLayoutPreference,
+};
 use std::fs;
 use std::path::PathBuf;
 use tauri::async_runtime::{JoinHandle, Mutex};
@@ -79,7 +82,16 @@ async fn set_wallpaper(
     state: State<'_, AppState>,
     wallpaper: Wallpaper,
 ) -> Result<Wallpaper, String> {
-    set_wallpaper_inner(&state.client, &state.cache_dir, &state.db_path, wallpaper).await
+    let settings = load_settings_from_path(&state.settings_path)
+        .map_err(|error| format!("Could not load settings: {error}"))?;
+    set_wallpaper_inner(
+        &state.client,
+        &state.cache_dir,
+        &state.db_path,
+        wallpaper,
+        settings.wallpaper_layout,
+    )
+    .await
 }
 
 #[tauri::command]
@@ -119,9 +131,10 @@ async fn set_wallpaper_inner(
     cache_dir: &PathBuf,
     db_path: &PathBuf,
     mut wallpaper: Wallpaper,
+    layout: WallpaperLayoutPreference,
 ) -> Result<Wallpaper, String> {
     let local_path = cache::download_wallpaper(client, cache_dir, &wallpaper).await?;
-    wallpaper::set_desktop_wallpaper(&local_path)?;
+    wallpaper::set_desktop_wallpaper(&local_path, layout)?;
     cache::record_wallpaper_used(db_path, &wallpaper, &local_path)?;
     wallpaper.local_path = Some(local_path.to_string_lossy().to_string());
     Ok(wallpaper)
@@ -148,11 +161,18 @@ async fn apply_random_wallpaper_inner(
                 .drain(..)
                 .next()
                 .ok_or_else(|| "No random wallpapers were returned.".to_string())?;
-            set_wallpaper_inner(&client, &cache_dir, &db_path, wallpaper).await
+            set_wallpaper_inner(
+                &client,
+                &cache_dir,
+                &db_path,
+                wallpaper,
+                settings.wallpaper_layout,
+            )
+            .await
         }
         Err(error) => {
             if let Some(path) = cache::random_cached_wallpaper(&db_path)? {
-                wallpaper::set_desktop_wallpaper(&path)?;
+                wallpaper::set_desktop_wallpaper(&path, settings.wallpaper_layout)?;
                 Ok(Wallpaper {
                     id: path
                         .file_stem()

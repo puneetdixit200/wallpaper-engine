@@ -11,6 +11,13 @@ export type ApiSource =
   | "both";
 export type ResolutionPreference = "auto" | "fullHd" | "fourK";
 export type ThemePreference = "system" | "light" | "dark";
+export type WallpaperLayoutPreference =
+  | "fill"
+  | "fit"
+  | "stretch"
+  | "tile"
+  | "center"
+  | "span";
 
 export type Mood =
   | "dark"
@@ -41,6 +48,7 @@ export interface AppSettings {
   cacheLimitMb: number;
   allowNsfwWallhaven: boolean;
   theme: ThemePreference;
+  wallpaperLayout: WallpaperLayoutPreference;
 }
 
 export interface Wallpaper {
@@ -79,6 +87,7 @@ export const defaultSettings: AppSettings = {
   cacheLimitMb: 1024,
   allowNsfwWallhaven: false,
   theme: "system",
+  wallpaperLayout: "fit",
 };
 
 export const moodQueries: Record<Mood, string[]> = {
