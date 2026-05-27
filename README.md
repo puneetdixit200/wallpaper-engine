@@ -8,6 +8,8 @@ Installers are committed in this repo under `installers/`.
 
 | Platform | File | Use when |
 | --- | --- | --- |
+| Windows setup EXE | [installers/windows/Wallpaper-Engine_0.1.0_x64-setup.exe](installers/windows/Wallpaper-Engine_0.1.0_x64-setup.exe) | Standard Windows install |
+| Windows MSI | [installers/windows/Wallpaper-Engine_0.1.0_x64_en-US.msi](installers/windows/Wallpaper-Engine_0.1.0_x64_en-US.msi) | Managed/manual MSI install |
 | macOS Apple Silicon | [installers/macos/Wallpaper-Engine_0.1.0_aarch64.dmg](installers/macos/Wallpaper-Engine_0.1.0_aarch64.dmg) | M1/M2/M3/M4 Macs |
 | Linux AppImage | [installers/linux/Wallpaper-Engine_0.1.0_amd64.AppImage](installers/linux/Wallpaper-Engine_0.1.0_amd64.AppImage) | Portable Linux run without package install |
 | Linux DEB | [installers/linux/Wallpaper-Engine_0.1.0_amd64.deb](installers/linux/Wallpaper-Engine_0.1.0_amd64.deb) | Debian, Ubuntu, Linux Mint |
@@ -20,6 +22,20 @@ shasum -a 256 -c installers/SHA256SUMS
 ```
 
 On Linux, `sha256sum -c installers/SHA256SUMS` also works.
+
+## Windows Install
+
+Download or clone the repo, then run the standard setup installer:
+
+```powershell
+.\installers\windows\Wallpaper-Engine_0.1.0_x64-setup.exe
+```
+
+For MSI-based installs:
+
+```powershell
+msiexec /i .\installers\windows\Wallpaper-Engine_0.1.0_x64_en-US.msi
+```
 
 ## macOS Install
 

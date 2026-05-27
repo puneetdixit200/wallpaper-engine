@@ -2,3 +2,5 @@
 f260130a9ea62149a05469ad0a4aa4e2b4d2adcb9001b6892516fa82cc6850d0  installers/linux/Wallpaper-Engine_0.1.0_amd64.AppImage
 fa3a1edf4727d5cb7d7086869990e8e4ce2de5edf8a578cc4998409058d7fb3b  installers/linux/Wallpaper-Engine_0.1.0_amd64.deb
 ee7fffb560cc13a89f997c9e28869ff3a028374281a428dd9f6f83fc77b554f4  installers/macos/Wallpaper-Engine_0.1.0_aarch64.dmg
+6f0d0ea43a8f9eaee56e5c6df42799d27b4f16853c3d7b485458512a942d27af  installers/windows/Wallpaper-Engine_0.1.0_x64-setup.exe
+0f57c08d60d1882b1df7e1c0ce2b243f443d79411a91aa5e0609548322d6323c  installers/windows/Wallpaper-Engine_0.1.0_x64_en-US.msi
