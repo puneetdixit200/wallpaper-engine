@@ -2,18 +2,20 @@
 
 Wallpaper Engine is a Tauri desktop app for finding, saving, caching, and applying still wallpapers from multiple wallpaper providers.
 
-## Ready Installers
+## One-Click Downloads
 
-Installers are committed in this repo under `installers/`.
+Click a link below to download the current packaged installer directly from this repo.
+The same files are also committed under `installers/` for source checkouts.
 
-| Platform | File | Use when |
+| Platform | Direct download | Use when |
 | --- | --- | --- |
-| Windows setup EXE | [installers/windows/Wallpaper-Engine_0.1.0_x64-setup.exe](installers/windows/Wallpaper-Engine_0.1.0_x64-setup.exe) | Standard Windows install |
-| Windows MSI | [installers/windows/Wallpaper-Engine_0.1.0_x64_en-US.msi](installers/windows/Wallpaper-Engine_0.1.0_x64_en-US.msi) | Managed/manual MSI install |
-| macOS Apple Silicon | [installers/macos/Wallpaper-Engine_0.1.0_aarch64.dmg](installers/macos/Wallpaper-Engine_0.1.0_aarch64.dmg) | M1/M2/M3/M4 Macs |
-| Linux AppImage | [installers/linux/Wallpaper-Engine_0.1.0_amd64.AppImage](installers/linux/Wallpaper-Engine_0.1.0_amd64.AppImage) | Portable Linux run without package install |
-| Linux DEB | [installers/linux/Wallpaper-Engine_0.1.0_amd64.deb](installers/linux/Wallpaper-Engine_0.1.0_amd64.deb) | Debian, Ubuntu, Linux Mint |
-| Linux RPM | [installers/linux/Wallpaper-Engine-0.1.0-1.x86_64.rpm](installers/linux/Wallpaper-Engine-0.1.0-1.x86_64.rpm) | Fedora, RHEL, openSUSE-style RPM systems |
+| Windows setup EXE | [Download EXE](https://raw.githubusercontent.com/puneetdixit200/wallpaper-engine/main/installers/windows/Wallpaper-Engine_0.1.0_x64-setup.exe) | Standard Windows install |
+| Windows MSI | [Download MSI](https://raw.githubusercontent.com/puneetdixit200/wallpaper-engine/main/installers/windows/Wallpaper-Engine_0.1.0_x64_en-US.msi) | Managed/manual MSI install |
+| macOS Apple Silicon | [Download DMG](https://raw.githubusercontent.com/puneetdixit200/wallpaper-engine/main/installers/macos/Wallpaper-Engine_0.1.0_aarch64.dmg) | M1/M2/M3/M4 Macs |
+| Linux AppImage | [Download AppImage](https://raw.githubusercontent.com/puneetdixit200/wallpaper-engine/main/installers/linux/Wallpaper-Engine_0.1.0_amd64.AppImage) | Portable Linux run without package install |
+| Linux DEB | [Download DEB](https://raw.githubusercontent.com/puneetdixit200/wallpaper-engine/main/installers/linux/Wallpaper-Engine_0.1.0_amd64.deb) | Debian, Ubuntu, Linux Mint |
+| Linux RPM | [Download RPM](https://raw.githubusercontent.com/puneetdixit200/wallpaper-engine/main/installers/linux/Wallpaper-Engine-0.1.0-1.x86_64.rpm) | Fedora, RHEL, openSUSE-style RPM systems |
+| Checksums | [Download SHA256SUMS](https://raw.githubusercontent.com/puneetdixit200/wallpaper-engine/main/installers/SHA256SUMS) | Verify installer integrity |
 
 Verify downloaded files:
 
