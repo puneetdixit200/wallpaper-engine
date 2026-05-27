@@ -1,0 +1,69 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024">
+  <defs>
+    <linearGradient id="bg" x1="96" y1="72" x2="928" y2="952" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#08110e" />
+      <stop offset="0.48" stop-color="#123126" />
+      <stop offset="1" stop-color="#071715" />
+    </linearGradient>
+    <linearGradient id="w" x1="214" y1="260" x2="810" y2="790" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#e9fbe8" />
+      <stop offset="0.42" stop-color="#61d99d" />
+      <stop offset="1" stop-color="#d6ab55" />
+    </linearGradient>
+    <radialGradient id="glow" cx="35%" cy="24%" r="72%">
+      <stop offset="0" stop-color="#75f2a8" stop-opacity="0.34" />
+      <stop offset="0.52" stop-color="#75f2a8" stop-opacity="0.1" />
+      <stop offset="1" stop-color="#75f2a8" stop-opacity="0" />
+    </radialGradient>
+    <filter id="soft-shadow" x="-20%" y="-20%" width="140%" height="140%">
+      <feDropShadow dx="0" dy="30" stdDeviation="24" flood-color="#000000" flood-opacity="0.42" />
+    </filter>
+  </defs>
+
+  <rect width="1024" height="1024" rx="232" fill="url(#bg)" />
+  <rect x="56" y="56" width="912" height="912" rx="196" fill="url(#glow)" />
+  <path
+    d="M158 696 C255 582 344 522 458 480 C574 438 692 374 866 196"
+    fill="none"
+    stroke="#ffffff"
+    stroke-opacity="0.08"
+    stroke-width="78"
+    stroke-linecap="round"
+  />
+  <path
+    d="M186 332 C302 288 430 270 570 278 C686 284 782 312 862 360"
+    fill="none"
+    stroke="#61d99d"
+    stroke-opacity="0.16"
+    stroke-width="26"
+    stroke-linecap="round"
+  />
+  <path
+    d="M230 308 L346 724 L512 410 L678 724 L794 308"
+    fill="none"
+    stroke="#07110f"
+    stroke-width="126"
+    stroke-linecap="round"
+    stroke-linejoin="round"
+    opacity="0.58"
+    filter="url(#soft-shadow)"
+  />
+  <path
+    d="M230 308 L346 724 L512 410 L678 724 L794 308"
+    fill="none"
+    stroke="url(#w)"
+    stroke-width="94"
+    stroke-linecap="round"
+    stroke-linejoin="round"
+  />
+  <path
+    d="M246 320 L354 704 L512 404"
+    fill="none"
+    stroke="#ffffff"
+    stroke-opacity="0.42"
+    stroke-width="20"
+    stroke-linecap="round"
+    stroke-linejoin="round"
+  />
+  <circle cx="794" cy="308" r="24" fill="#f1c76b" />
+</svg>

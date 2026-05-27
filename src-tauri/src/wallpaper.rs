@@ -422,10 +422,13 @@ pub fn fit_wallpaper_to_screen_dimensions(
 ) -> Option<(u32, u32)> {
     let (image_width, image_height) = image_size;
     let (screen_width, screen_height) = screen_size;
+    let has_matching_aspect_ratio =
+        image_width as u64 * screen_height as u64 == screen_width as u64 * image_height as u64;
     if image_width == 0
         || image_height == 0
         || screen_width == 0
         || screen_height == 0
+        || !has_matching_aspect_ratio
         || (image_width <= screen_width && image_height <= screen_height)
     {
         return None;
@@ -813,17 +816,29 @@ mod tests {
     }
 
     #[test]
-    fn oversized_wallpapers_are_sized_inside_screen_without_upscaling() {
+    fn same_aspect_ratio_oversized_wallpapers_are_sized_inside_screen_without_upscaling() {
         assert_eq!(
             fit_wallpaper_to_screen_dimensions((3840, 2160), (1920, 1080)),
             Some((1920, 1080))
         );
         assert_eq!(
-            fit_wallpaper_to_screen_dimensions((4000, 3000), (1920, 1080)),
-            Some((1440, 1080))
+            fit_wallpaper_to_screen_dimensions((4096, 2304), (1920, 1080)),
+            Some((1920, 1080))
         );
         assert_eq!(
             fit_wallpaper_to_screen_dimensions((1280, 720), (1920, 1080)),
+            None
+        );
+    }
+
+    #[test]
+    fn different_aspect_ratio_wallpapers_keep_original_size_to_avoid_fill_blur() {
+        assert_eq!(
+            fit_wallpaper_to_screen_dimensions((4000, 3000), (1920, 1080)),
+            None
+        );
+        assert_eq!(
+            fit_wallpaper_to_screen_dimensions((3000, 4000), (1080, 1920)),
             None
         );
     }

@@ -103,9 +103,14 @@ button {
 }
 
 .sidebar {
+  position: sticky;
+  top: 0;
+  align-self: start;
   display: flex;
   flex-direction: column;
   gap: 28px;
+  height: 100vh;
+  overflow-y: auto;
   padding: 24px 18px;
   background: var(--sidebar-bg);
   color: var(--sidebar-text);
