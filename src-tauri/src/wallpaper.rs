@@ -52,6 +52,34 @@ pub fn wallpaper_lock_from_current_desktop(
     current_wallpaper.map(|path| WallpaperLock { path, layout })
 }
 
+pub fn restore_startup_wallpaper_if_app_changed<F>(
+    startup_wallpaper: Option<&WallpaperLock>,
+    active_wallpaper_lock: Option<&WallpaperLock>,
+    current_wallpaper: Option<PathBuf>,
+    set_wallpaper: F,
+) -> Result<bool, String>
+where
+    F: FnOnce(&Path, WallpaperLayoutPreference) -> Result<(), String>,
+{
+    let Some(startup_wallpaper) = startup_wallpaper else {
+        return Ok(false);
+    };
+    let Some(active_wallpaper_lock) = active_wallpaper_lock else {
+        return Ok(false);
+    };
+
+    if wallpaper_paths_match(&startup_wallpaper.path, &active_wallpaper_lock.path)
+        || current_wallpaper
+            .as_deref()
+            .is_some_and(|current| wallpaper_paths_match(current, &startup_wallpaper.path))
+    {
+        return Ok(false);
+    }
+
+    set_wallpaper(&startup_wallpaper.path, startup_wallpaper.layout)?;
+    Ok(true)
+}
+
 #[cfg(target_os = "windows")]
 pub fn current_desktop_wallpaper() -> Result<Option<PathBuf>, String> {
     use windows_sys::Win32::UI::WindowsAndMessaging::{
@@ -962,5 +990,58 @@ mod tests {
             wallpaper_lock_from_current_desktop(None, WallpaperLayoutPreference::Fill),
             None
         );
+    }
+
+    #[test]
+    fn shutdown_restore_returns_to_startup_wallpaper_after_app_changes_wallpaper() {
+        let startup = WallpaperLock {
+            path: PathBuf::from("C:\\Wallpapers\\before-app.jpg"),
+            layout: WallpaperLayoutPreference::Fit,
+        };
+        let active = WallpaperLock {
+            path: PathBuf::from("C:\\Wallpapers\\app-wallpaper.jpg"),
+            layout: WallpaperLayoutPreference::Fill,
+        };
+        let mut applied = Vec::new();
+
+        let restored = restore_startup_wallpaper_if_app_changed(
+            Some(&startup),
+            Some(&active),
+            Some(active.path.clone()),
+            |path, layout| {
+                applied.push((path.to_path_buf(), layout));
+                Ok(())
+            },
+        )
+        .expect("startup wallpaper should restore");
+
+        assert!(restored);
+        assert_eq!(
+            applied,
+            vec![(startup.path.clone(), WallpaperLayoutPreference::Fit)]
+        );
+    }
+
+    #[test]
+    fn shutdown_restore_skips_when_app_never_changed_wallpaper() {
+        let startup = WallpaperLock {
+            path: PathBuf::from("C:\\Wallpapers\\before-app.jpg"),
+            layout: WallpaperLayoutPreference::Fit,
+        };
+        let mut applied = Vec::new();
+
+        let restored = restore_startup_wallpaper_if_app_changed(
+            Some(&startup),
+            Some(&startup),
+            Some(startup.path.clone()),
+            |path, layout| {
+                applied.push((path.to_path_buf(), layout));
+                Ok(())
+            },
+        )
+        .expect("startup wallpaper should not need restore");
+
+        assert!(!restored);
+        assert!(applied.is_empty());
     }
 }

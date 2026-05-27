@@ -23,6 +23,7 @@ pub struct AppState {
     cache_dir: PathBuf,
     scheduler: Mutex<Option<JoinHandle<()>>>,
     wallpaper_lock: Arc<Mutex<Option<wallpaper::WallpaperLock>>>,
+    startup_wallpaper: Arc<Mutex<Option<wallpaper::WallpaperLock>>>,
 }
 
 #[tauri::command]
@@ -319,9 +320,31 @@ fn start_wallpaper_guard(wallpaper_lock: Arc<Mutex<Option<wallpaper::WallpaperLo
     let _ = wallpaper_lock;
 }
 
+fn restore_startup_wallpaper_before_exit(app_handle: &tauri::AppHandle) {
+    let Some(state) = app_handle.try_state::<AppState>() else {
+        return;
+    };
+
+    tauri::async_runtime::block_on(async {
+        let startup_wallpaper = {
+            let mut startup_wallpaper = state.startup_wallpaper.lock().await;
+            startup_wallpaper.take()
+        };
+        let active_wallpaper_lock = state.wallpaper_lock.lock().await.clone();
+        let current_wallpaper = wallpaper::current_desktop_wallpaper().ok().flatten();
+
+        let _ = wallpaper::restore_startup_wallpaper_if_app_changed(
+            startup_wallpaper.as_ref(),
+            active_wallpaper_lock.as_ref(),
+            current_wallpaper,
+            wallpaper::set_desktop_wallpaper,
+        );
+    });
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
-    tauri::Builder::default()
+    let app = tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
         .setup(|app| {
             let config_dir = app.path().app_config_dir()?;
@@ -336,11 +359,12 @@ pub fn run() {
             let db_path = data_dir.join("wallpapers.sqlite3");
             cache::init_database(&db_path)
                 .map_err(|error| Box::<dyn std::error::Error>::from(error))?;
-            let wallpaper_lock =
-                Arc::new(Mutex::new(wallpaper::wallpaper_lock_from_current_desktop(
-                    wallpaper::current_desktop_wallpaper().ok().flatten(),
-                    settings.wallpaper_layout,
-                )));
+            let startup_wallpaper = wallpaper::wallpaper_lock_from_current_desktop(
+                wallpaper::current_desktop_wallpaper().ok().flatten(),
+                settings.wallpaper_layout,
+            );
+            let wallpaper_lock = Arc::new(Mutex::new(startup_wallpaper.clone()));
+            let startup_wallpaper = Arc::new(Mutex::new(startup_wallpaper));
             start_wallpaper_guard(wallpaper_lock.clone());
 
             app.manage(AppState {
@@ -350,6 +374,7 @@ pub fn run() {
                 cache_dir,
                 scheduler: Mutex::new(None),
                 wallpaper_lock,
+                startup_wallpaper,
             });
             Ok(())
         })
@@ -366,8 +391,22 @@ pub fn run() {
             clear_library,
             apply_random_wallpaper
         ])
-        .run(tauri::generate_context!())
+        .build(tauri::generate_context!())
         .expect("error while running tauri application");
+
+    app.run(|app_handle, event| match event {
+        tauri::RunEvent::WindowEvent {
+            event: tauri::WindowEvent::CloseRequested { .. },
+            ..
+        } => {
+            restore_startup_wallpaper_before_exit(app_handle);
+            app_handle.exit(0);
+        }
+        tauri::RunEvent::ExitRequested { .. } => {
+            restore_startup_wallpaper_before_exit(app_handle);
+        }
+        _ => {}
+    });
 }
 
 #[cfg(test)]
