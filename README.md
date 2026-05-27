@@ -92,7 +92,8 @@ Linux wallpaper application is ready for common desktop environments. GNOME-comp
 - Keep the active wallpaper locked while the app runs so Windows slideshow/theme changes are overwritten.
 - Filter provider results to desktop-sized landscape wallpapers.
 - Save favorites and keep downloaded wallpapers in a local SQLite-backed cache.
-- Start the saved auto-change interval on launch and keep it running from the tray after the window is closed.
+- Ask before enabling background mode, keep the saved auto-change interval running from the tray after the window is closed, and start at login when permitted.
+- On Windows, minimizing the app sends it to the tray so wallpaper updates continue in the background.
 - Build bundles for Windows, Linux, and macOS through GitHub Actions.
 
 ## Development

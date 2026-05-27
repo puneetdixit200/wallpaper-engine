@@ -58,6 +58,10 @@ pub struct AppSettings {
     pub theme: ThemePreference,
     #[serde(default)]
     pub wallpaper_layout: WallpaperLayoutPreference,
+    #[serde(default)]
+    pub run_in_background: bool,
+    #[serde(default)]
+    pub launch_at_startup: bool,
 }
 
 impl Default for ApiKeys {
@@ -82,6 +86,8 @@ impl Default for AppSettings {
             allow_nsfw_wallhaven: false,
             theme: ThemePreference::System,
             wallpaper_layout: WallpaperLayoutPreference::Fit,
+            run_in_background: false,
+            launch_at_startup: false,
         }
     }
 }
@@ -215,6 +221,8 @@ mod tests {
         assert!(!loaded.allow_nsfw_wallhaven);
         assert_eq!(loaded.theme, ThemePreference::System);
         assert_eq!(loaded.wallpaper_layout, WallpaperLayoutPreference::Fit);
+        assert!(!loaded.run_in_background);
+        assert!(!loaded.launch_at_startup);
     }
 
     #[test]
@@ -229,6 +237,24 @@ mod tests {
         let loaded = load_settings_from_path(&path).expect("settings should load");
 
         assert_eq!(loaded.auto_change_minutes, 7);
+
+        let _ = fs::remove_file(path);
+    }
+
+    #[test]
+    fn saves_and_loads_background_startup_preferences() {
+        let path = temp_settings_path("background-startup");
+        let settings = AppSettings {
+            run_in_background: true,
+            launch_at_startup: true,
+            ..AppSettings::default()
+        };
+
+        save_settings_to_path(&path, &settings).expect("settings should save");
+        let loaded = load_settings_from_path(&path).expect("settings should load");
+
+        assert!(loaded.run_in_background);
+        assert!(loaded.launch_at_startup);
 
         let _ = fs::remove_file(path);
     }

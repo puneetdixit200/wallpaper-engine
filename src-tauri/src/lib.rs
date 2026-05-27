@@ -18,6 +18,7 @@ use tauri::async_runtime::{JoinHandle, Mutex};
 use tauri::menu::MenuBuilder;
 use tauri::tray::TrayIconBuilder;
 use tauri::{Manager, State};
+use tauri_plugin_autostart::ManagerExt;
 
 const TRAY_OPEN_ID: &str = "open";
 const TRAY_QUIT_ID: &str = "quit";
@@ -46,10 +47,12 @@ fn get_settings(state: State<'_, AppState>) -> Result<AppSettings, String> {
 
 #[tauri::command]
 async fn save_settings(
+    app_handle: tauri::AppHandle,
     state: State<'_, AppState>,
     settings: AppSettings,
 ) -> Result<AppSettings, String> {
     let settings = settings.sanitized();
+    sync_autostart(&app_handle, &settings)?;
     save_settings_to_path(&state.settings_path, &settings)
         .map_err(|error| format!("Could not save settings: {error}"))?;
     restart_scheduler(state.inner(), settings.auto_change_minutes).await?;
@@ -299,12 +302,53 @@ fn scheduler_first_tick_at(now: std::time::Instant, interval: Duration) -> std::
     now + interval
 }
 
-fn window_close_action(auto_change_minutes: u64) -> WindowCloseAction {
-    if scheduler_interval(auto_change_minutes).is_some() {
+fn should_run_in_background(settings: &AppSettings) -> bool {
+    settings.run_in_background || scheduler_interval(settings.auto_change_minutes).is_some()
+}
+
+fn desired_autostart_state(settings: &AppSettings) -> bool {
+    settings.launch_at_startup && should_run_in_background(settings)
+}
+
+fn should_hide_minimized_window_to_tray(settings: &AppSettings) -> bool {
+    should_run_in_background(settings)
+}
+
+fn window_close_action(settings: &AppSettings) -> WindowCloseAction {
+    if should_hide_minimized_window_to_tray(settings) {
         WindowCloseAction::HideToBackground
     } else {
         WindowCloseAction::Exit
     }
+}
+
+fn launch_args_request_background<I, S>(args: I) -> bool
+where
+    I: IntoIterator<Item = S>,
+    S: AsRef<str>,
+{
+    args.into_iter()
+        .any(|arg| matches!(arg.as_ref(), "--background" | "--hidden" | "--tray"))
+}
+
+fn sync_autostart(app_handle: &tauri::AppHandle, settings: &AppSettings) -> Result<(), String> {
+    let manager = app_handle.autolaunch();
+    let desired = desired_autostart_state(settings);
+    let enabled = manager
+        .is_enabled()
+        .map_err(|error| format!("Could not read startup app permission: {error}"))?;
+
+    match (desired, enabled) {
+        (true, false) => manager
+            .enable()
+            .map_err(|error| format!("Could not enable startup app permission: {error}"))?,
+        (false, true) => manager
+            .disable()
+            .map_err(|error| format!("Could not disable startup app permission: {error}"))?,
+        _ => {}
+    }
+
+    Ok(())
 }
 
 async fn remember_locked_wallpaper(
@@ -369,8 +413,28 @@ fn restore_startup_wallpaper_before_exit(app_handle: &tauri::AppHandle) {
 
 fn show_main_window(app_handle: &tauri::AppHandle) {
     if let Some(window) = app_handle.get_webview_window("main") {
+        let _ = window.unminimize();
         let _ = window.show();
         let _ = window.set_focus();
+    }
+}
+
+#[cfg(target_os = "windows")]
+fn hide_minimized_window_to_tray(app_handle: &tauri::AppHandle, label: &str) {
+    let should_hide = app_handle
+        .try_state::<AppState>()
+        .and_then(|state| load_settings_from_path(&state.settings_path).ok())
+        .map(|settings| should_hide_minimized_window_to_tray(&settings))
+        .unwrap_or_default();
+
+    if !should_hide {
+        return;
+    }
+
+    if let Some(window) = app_handle.get_webview_window(label) {
+        if window.is_minimized().unwrap_or(false) {
+            let _ = window.hide();
+        }
     }
 }
 
@@ -379,13 +443,12 @@ fn close_window_or_background_service(
     label: &str,
     api: &tauri::CloseRequestApi,
 ) {
-    let auto_change_minutes = app_handle
+    let settings = app_handle
         .try_state::<AppState>()
         .and_then(|state| load_settings_from_path(&state.settings_path).ok())
-        .map(|settings| settings.auto_change_minutes)
         .unwrap_or_default();
 
-    match window_close_action(auto_change_minutes) {
+    match window_close_action(&settings) {
         WindowCloseAction::HideToBackground => {
             api.prevent_close();
             if let Some(window) = app_handle.get_webview_window(label) {
@@ -427,6 +490,10 @@ fn setup_tray(app: &tauri::App) -> Result<(), Box<dyn std::error::Error>> {
 pub fn run() {
     let app = tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
+        .plugin(tauri_plugin_autostart::init(
+            tauri_plugin_autostart::MacosLauncher::LaunchAgent,
+            Some(vec!["--background".into()]),
+        ))
         .setup(|app| {
             let config_dir = app.path().app_config_dir()?;
             let data_dir = app.path().app_data_dir()?;
@@ -449,6 +516,8 @@ pub fn run() {
             let startup_wallpaper = Arc::new(Mutex::new(startup_wallpaper));
             start_wallpaper_guard(wallpaper_lock.clone());
             setup_tray(app)?;
+            let start_hidden = launch_args_request_background(std::env::args())
+                && should_run_in_background(&settings);
 
             app.manage(AppState {
                 client: Client::new(),
@@ -466,6 +535,12 @@ pub fn run() {
                     interval.as_secs() / 60,
                 ))
                 .map_err(|error| Box::<dyn std::error::Error>::from(error))?;
+            }
+            let _ = sync_autostart(app.handle(), &settings);
+            if start_hidden {
+                if let Some(window) = app.get_webview_window("main") {
+                    let _ = window.hide();
+                }
             }
             Ok(())
         })
@@ -492,6 +567,14 @@ pub fn run() {
             ..
         } => {
             close_window_or_background_service(app_handle, &label, &api);
+        }
+        #[cfg(target_os = "windows")]
+        tauri::RunEvent::WindowEvent {
+            label,
+            event: tauri::WindowEvent::Resized(_),
+            ..
+        } => {
+            hide_minimized_window_to_tray(app_handle, &label);
         }
         tauri::RunEvent::ExitRequested { .. } => {
             restore_startup_wallpaper_before_exit(app_handle);
@@ -582,7 +665,73 @@ mod config_tests {
 
     #[test]
     fn closing_window_keeps_background_service_alive_when_auto_change_is_enabled() {
-        assert_eq!(window_close_action(15), WindowCloseAction::HideToBackground);
-        assert_eq!(window_close_action(0), WindowCloseAction::Exit);
+        let auto_change = AppSettings {
+            auto_change_minutes: 15,
+            ..AppSettings::default()
+        };
+        let background = AppSettings {
+            run_in_background: true,
+            ..AppSettings::default()
+        };
+        let disabled = AppSettings::default();
+
+        assert_eq!(
+            window_close_action(&auto_change),
+            WindowCloseAction::HideToBackground
+        );
+        assert_eq!(
+            window_close_action(&background),
+            WindowCloseAction::HideToBackground
+        );
+        assert_eq!(window_close_action(&disabled), WindowCloseAction::Exit);
+    }
+
+    #[test]
+    fn startup_autostart_is_enabled_only_after_permission() {
+        let disabled = AppSettings::default();
+        let background_without_startup = AppSettings {
+            run_in_background: true,
+            ..AppSettings::default()
+        };
+        let enabled = AppSettings {
+            run_in_background: true,
+            launch_at_startup: true,
+            ..AppSettings::default()
+        };
+
+        assert_eq!(desired_autostart_state(&disabled), false);
+        assert_eq!(desired_autostart_state(&background_without_startup), false);
+        assert_eq!(desired_autostart_state(&enabled), true);
+    }
+
+    #[test]
+    fn windows_minimize_to_tray_follows_background_permission() {
+        let background = AppSettings {
+            run_in_background: true,
+            ..AppSettings::default()
+        };
+        let auto_change = AppSettings {
+            auto_change_minutes: 10,
+            ..AppSettings::default()
+        };
+
+        assert!(should_hide_minimized_window_to_tray(&background));
+        assert!(should_hide_minimized_window_to_tray(&auto_change));
+        assert!(!should_hide_minimized_window_to_tray(
+            &AppSettings::default()
+        ));
+    }
+
+    #[test]
+    fn autostart_background_launch_uses_hidden_window_argument() {
+        assert!(launch_args_request_background([
+            "wallpaper-engine",
+            "--background"
+        ]));
+        assert!(launch_args_request_background([
+            "wallpaper-engine",
+            "--hidden"
+        ]));
+        assert!(!launch_args_request_background(["wallpaper-engine"]));
     }
 }

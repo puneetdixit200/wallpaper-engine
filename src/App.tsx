@@ -6,6 +6,11 @@ import { HomePage } from "./pages/Home";
 import { SearchPage } from "./pages/Search";
 import { LibraryPage } from "./pages/Library";
 import { SettingsPage } from "./pages/Settings";
+import {
+  backgroundPermissionMessage,
+  shouldAskForBackgroundPermission,
+  withBackgroundPermission,
+} from "./settingsFlow";
 import { resolveThemePreference } from "./themePreference";
 import { ViewName } from "./types";
 import "./App.css";
@@ -39,6 +44,8 @@ function useSystemPrefersDark() {
 }
 
 function AppShell() {
+  const [backgroundPromptDismissed, setBackgroundPromptDismissed] =
+    useState(false);
   const {
     activeView,
     favoriteIds,
@@ -50,6 +57,9 @@ function AppShell() {
     settings.theme,
     systemPrefersDark,
   );
+  const shouldShowBackgroundPrompt =
+    !backgroundPromptDismissed &&
+    shouldAskForBackgroundPermission(settings, settings);
 
   const content =
     activeView === "home" ? (
@@ -105,6 +115,29 @@ function AppShell() {
       </aside>
 
       <section className="content-shell">
+        {shouldShowBackgroundPrompt ? (
+          <div className="permission-banner">
+            <span>{backgroundPermissionMessage}</span>
+            <div>
+              <button
+                className="primary-button"
+                onClick={() =>
+                  void actions.saveSettings(withBackgroundPermission(settings))
+                }
+                type="button"
+              >
+                Allow
+              </button>
+              <button
+                className="secondary-button"
+                onClick={() => setBackgroundPromptDismissed(true)}
+                type="button"
+              >
+                Not now
+              </button>
+            </div>
+          </div>
+        ) : null}
         <div className="view-transition" key={activeView}>
           {content}
         </div>

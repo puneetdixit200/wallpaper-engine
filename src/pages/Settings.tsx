@@ -7,7 +7,13 @@ import {
   ThemePreference,
   WallpaperLayoutPreference,
 } from "../types";
-import { parseAutoChangeMinutes, parseCacheLimitMb } from "../settingsFlow";
+import {
+  backgroundPermissionMessage,
+  parseAutoChangeMinutes,
+  parseCacheLimitMb,
+  shouldAskForBackgroundPermission,
+  withBackgroundPermission,
+} from "../settingsFlow";
 
 const resolutions: Array<{ label: string; value: ResolutionPreference }> = [
   { label: "Auto", value: "auto" },
@@ -47,7 +53,17 @@ export function SettingsPage() {
 
   function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    void actions.saveSettings(draft);
+    let nextSettings = draft;
+    if (shouldAskForBackgroundPermission(settings, draft)) {
+      const allowed = window.confirm(backgroundPermissionMessage);
+      if (!allowed) {
+        return;
+      }
+      nextSettings = withBackgroundPermission(draft);
+      setDraft(nextSettings);
+    }
+
+    void actions.saveSettings(nextSettings);
   }
 
   function updateApiKey(key: keyof AppSettings["apiKeys"], value: string) {
@@ -226,6 +242,28 @@ export function SettingsPage() {
             type="checkbox"
           />
           <span>Allow Wallhaven NSFW</span>
+        </label>
+
+        <label className="checkbox-row">
+          <input
+            checked={draft.runInBackground}
+            onChange={(event) =>
+              updateDraft({ runInBackground: event.currentTarget.checked })
+            }
+            type="checkbox"
+          />
+          <span>Run in background after closing</span>
+        </label>
+
+        <label className="checkbox-row">
+          <input
+            checked={draft.launchAtStartup}
+            onChange={(event) =>
+              updateDraft({ launchAtStartup: event.currentTarget.checked })
+            }
+            type="checkbox"
+          />
+          <span>Start at login</span>
         </label>
 
         <div className="settings-actions">

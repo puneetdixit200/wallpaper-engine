@@ -48,6 +48,8 @@ export interface AppSettings {
   allowNsfwWallhaven: boolean;
   theme: ThemePreference;
   wallpaperLayout: WallpaperLayoutPreference;
+  runInBackground: boolean;
+  launchAtStartup: boolean;
 }
 
 export interface Wallpaper {
@@ -88,6 +90,8 @@ export const defaultSettings: AppSettings = {
   allowNsfwWallhaven: false,
   theme: "system",
   wallpaperLayout: "fit",
+  runInBackground: false,
+  launchAtStartup: false,
 };
 
 export const moodQueries: Record<Mood, string[]> = {
