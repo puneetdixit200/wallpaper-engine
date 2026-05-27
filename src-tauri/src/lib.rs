@@ -13,8 +13,14 @@ use settings::{
 use std::fs;
 use std::path::PathBuf;
 use std::sync::Arc;
+use std::time::Duration;
 use tauri::async_runtime::{JoinHandle, Mutex};
+use tauri::menu::MenuBuilder;
+use tauri::tray::TrayIconBuilder;
 use tauri::{Manager, State};
+
+const TRAY_OPEN_ID: &str = "open";
+const TRAY_QUIT_ID: &str = "quit";
 
 pub struct AppState {
     client: Client,
@@ -24,6 +30,12 @@ pub struct AppState {
     scheduler: Mutex<Option<JoinHandle<()>>>,
     wallpaper_lock: Arc<Mutex<Option<wallpaper::WallpaperLock>>>,
     startup_wallpaper: Arc<Mutex<Option<wallpaper::WallpaperLock>>>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum WindowCloseAction {
+    HideToBackground,
+    Exit,
 }
 
 #[tauri::command]
@@ -40,7 +52,7 @@ async fn save_settings(
     let settings = settings.sanitized();
     save_settings_to_path(&state.settings_path, &settings)
         .map_err(|error| format!("Could not save settings: {error}"))?;
-    restart_scheduler(&state, settings.auto_change_minutes).await?;
+    restart_scheduler(state.inner(), settings.auto_change_minutes).await?;
     Ok(settings)
 }
 
@@ -224,25 +236,21 @@ async fn apply_random_wallpaper_inner(
     }
 }
 
-async fn restart_scheduler(
-    state: &State<'_, AppState>,
-    interval_minutes: u64,
-) -> Result<(), String> {
+async fn restart_scheduler(state: &AppState, interval_minutes: u64) -> Result<(), String> {
     let mut scheduler = state.scheduler.lock().await;
     if let Some(handle) = scheduler.take() {
         handle.abort();
     }
 
-    if interval_minutes == 0 {
+    let Some(interval) = scheduler_interval(interval_minutes) else {
         return Ok(());
-    }
+    };
 
     let client = state.client.clone();
     let settings_path = state.settings_path.clone();
     let db_path = state.db_path.clone();
     let cache_dir = state.cache_dir.clone();
     let wallpaper_lock = state.wallpaper_lock.clone();
-    let interval = std::time::Duration::from_secs(interval_minutes * 60);
 
     *scheduler = Some(tauri::async_runtime::spawn(async move {
         let first_tick = tokio::time::Instant::from_std(scheduler_first_tick_at(
@@ -275,11 +283,28 @@ async fn restart_scheduler(
     Ok(())
 }
 
-fn scheduler_first_tick_at(
-    now: std::time::Instant,
-    interval: std::time::Duration,
-) -> std::time::Instant {
+fn startup_scheduler_interval(settings: &AppSettings) -> Option<Duration> {
+    scheduler_interval(settings.auto_change_minutes)
+}
+
+fn scheduler_interval(interval_minutes: u64) -> Option<Duration> {
+    if interval_minutes == 0 {
+        None
+    } else {
+        Some(Duration::from_secs(interval_minutes * 60))
+    }
+}
+
+fn scheduler_first_tick_at(now: std::time::Instant, interval: Duration) -> std::time::Instant {
     now + interval
+}
+
+fn window_close_action(auto_change_minutes: u64) -> WindowCloseAction {
+    if scheduler_interval(auto_change_minutes).is_some() {
+        WindowCloseAction::HideToBackground
+    } else {
+        WindowCloseAction::Exit
+    }
 }
 
 async fn remember_locked_wallpaper(
@@ -342,6 +367,62 @@ fn restore_startup_wallpaper_before_exit(app_handle: &tauri::AppHandle) {
     });
 }
 
+fn show_main_window(app_handle: &tauri::AppHandle) {
+    if let Some(window) = app_handle.get_webview_window("main") {
+        let _ = window.show();
+        let _ = window.set_focus();
+    }
+}
+
+fn close_window_or_background_service(
+    app_handle: &tauri::AppHandle,
+    label: &str,
+    api: &tauri::CloseRequestApi,
+) {
+    let auto_change_minutes = app_handle
+        .try_state::<AppState>()
+        .and_then(|state| load_settings_from_path(&state.settings_path).ok())
+        .map(|settings| settings.auto_change_minutes)
+        .unwrap_or_default();
+
+    match window_close_action(auto_change_minutes) {
+        WindowCloseAction::HideToBackground => {
+            api.prevent_close();
+            if let Some(window) = app_handle.get_webview_window(label) {
+                let _ = window.hide();
+            }
+        }
+        WindowCloseAction::Exit => {
+            restore_startup_wallpaper_before_exit(app_handle);
+            app_handle.exit(0);
+        }
+    }
+}
+
+fn setup_tray(app: &tauri::App) -> Result<(), Box<dyn std::error::Error>> {
+    let menu = MenuBuilder::new(app)
+        .text(TRAY_OPEN_ID, "Open Wallpaper Engine")
+        .separator()
+        .text(TRAY_QUIT_ID, "Quit")
+        .build()?;
+    let mut tray = TrayIconBuilder::with_id("main")
+        .menu(&menu)
+        .tooltip("Wallpaper Engine")
+        .show_menu_on_left_click(true)
+        .on_menu_event(|app_handle, event| match event.id().as_ref() {
+            TRAY_OPEN_ID => show_main_window(app_handle),
+            TRAY_QUIT_ID => app_handle.exit(0),
+            _ => {}
+        });
+
+    if let Some(icon) = app.default_window_icon() {
+        tray = tray.icon(icon.clone());
+    }
+
+    tray.build(app)?;
+    Ok(())
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     let app = tauri::Builder::default()
@@ -359,6 +440,7 @@ pub fn run() {
             let db_path = data_dir.join("wallpapers.sqlite3");
             cache::init_database(&db_path)
                 .map_err(|error| Box::<dyn std::error::Error>::from(error))?;
+            let startup_interval = startup_scheduler_interval(&settings);
             let startup_wallpaper = wallpaper::wallpaper_lock_from_current_desktop(
                 wallpaper::current_desktop_wallpaper().ok().flatten(),
                 settings.wallpaper_layout,
@@ -366,6 +448,7 @@ pub fn run() {
             let wallpaper_lock = Arc::new(Mutex::new(startup_wallpaper.clone()));
             let startup_wallpaper = Arc::new(Mutex::new(startup_wallpaper));
             start_wallpaper_guard(wallpaper_lock.clone());
+            setup_tray(app)?;
 
             app.manage(AppState {
                 client: Client::new(),
@@ -376,6 +459,14 @@ pub fn run() {
                 wallpaper_lock,
                 startup_wallpaper,
             });
+            if let Some(interval) = startup_interval {
+                let state = app.state::<AppState>();
+                tauri::async_runtime::block_on(restart_scheduler(
+                    state.inner(),
+                    interval.as_secs() / 60,
+                ))
+                .map_err(|error| Box::<dyn std::error::Error>::from(error))?;
+            }
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
@@ -396,14 +487,18 @@ pub fn run() {
 
     app.run(|app_handle, event| match event {
         tauri::RunEvent::WindowEvent {
-            event: tauri::WindowEvent::CloseRequested { .. },
+            label,
+            event: tauri::WindowEvent::CloseRequested { api, .. },
             ..
         } => {
-            restore_startup_wallpaper_before_exit(app_handle);
-            app_handle.exit(0);
+            close_window_or_background_service(app_handle, &label, &api);
         }
         tauri::RunEvent::ExitRequested { .. } => {
             restore_startup_wallpaper_before_exit(app_handle);
+        }
+        #[cfg(target_os = "macos")]
+        tauri::RunEvent::Reopen { .. } => {
+            show_main_window(app_handle);
         }
         _ => {}
     });
@@ -460,5 +555,34 @@ mod config_tests {
         let interval = Duration::from_secs(15 * 60);
 
         assert_eq!(scheduler_first_tick_at(now, interval), now + interval);
+    }
+
+    #[test]
+    fn saved_auto_change_interval_starts_scheduler_on_launch() {
+        let settings = AppSettings {
+            auto_change_minutes: 15,
+            ..AppSettings::default()
+        };
+
+        assert_eq!(
+            startup_scheduler_interval(&settings),
+            Some(Duration::from_secs(15 * 60))
+        );
+    }
+
+    #[test]
+    fn zero_auto_change_interval_keeps_launch_scheduler_disabled() {
+        let settings = AppSettings {
+            auto_change_minutes: 0,
+            ..AppSettings::default()
+        };
+
+        assert_eq!(startup_scheduler_interval(&settings), None);
+    }
+
+    #[test]
+    fn closing_window_keeps_background_service_alive_when_auto_change_is_enabled() {
+        assert_eq!(window_close_action(15), WindowCloseAction::HideToBackground);
+        assert_eq!(window_close_action(0), WindowCloseAction::Exit);
     }
 }
