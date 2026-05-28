@@ -214,6 +214,85 @@ pub fn clear_library(db_path: &Path, cache_dir: &Path) -> Result<(), String> {
     Ok(())
 }
 
+pub fn delete_wallpaper(
+    db_path: &Path,
+    cache_dir: &Path,
+    wallpaper_id: &str,
+) -> Result<(), String> {
+    init_database(db_path)?;
+    let connection = Connection::open(db_path)
+        .map_err(|error| format!("Could not open wallpaper database: {error}"))?;
+    let local_paths = {
+        let mut statement = connection
+            .prepare("SELECT local_path FROM wallpapers WHERE id = ?1 AND local_path IS NOT NULL")
+            .map_err(|error| format!("Could not prepare wallpaper delete query: {error}"))?;
+        let paths = statement
+            .query_map(params![wallpaper_id], |row| row.get::<_, String>(0))
+            .map_err(|error| format!("Could not query wallpaper delete paths: {error}"))?
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(|error| format!("Could not read wallpaper delete paths: {error}"))?;
+        paths
+    };
+
+    for local_path in local_paths {
+        let path = PathBuf::from(local_path);
+        if path.exists() {
+            fs::remove_file(&path)
+                .map_err(|error| format!("Could not delete wallpaper file: {error}"))?;
+        }
+    }
+    delete_matching_cache_files(cache_dir, &safe_file_stem(wallpaper_id))?;
+
+    connection
+        .execute(
+            "DELETE FROM wallpapers WHERE id = ?1",
+            params![wallpaper_id],
+        )
+        .map_err(|error| format!("Could not delete wallpaper metadata: {error}"))?;
+    Ok(())
+}
+
+fn delete_matching_cache_files(cache_dir: &Path, stem: &str) -> Result<(), String> {
+    for folder in [cache_dir.join("full"), cache_dir.join("screen")] {
+        if !folder.exists() {
+            continue;
+        }
+
+        for entry in fs::read_dir(&folder)
+            .map_err(|error| format!("Could not read wallpaper cache: {error}"))?
+        {
+            let path = entry
+                .map_err(|error| format!("Could not read cached wallpaper entry: {error}"))?
+                .path();
+            if !path.is_file() {
+                continue;
+            }
+
+            let Some(file_stem) = path.file_stem().map(|value| value.to_string_lossy()) else {
+                continue;
+            };
+            if file_stem == stem || is_screen_cache_stem_for_wallpaper(&file_stem, stem) {
+                fs::remove_file(&path)
+                    .map_err(|error| format!("Could not delete cached wallpaper: {error}"))?;
+            }
+        }
+    }
+    Ok(())
+}
+
+fn is_screen_cache_stem_for_wallpaper(file_stem: &str, wallpaper_stem: &str) -> bool {
+    let Some(dimensions) = file_stem.strip_prefix(&format!("{wallpaper_stem}-")) else {
+        return false;
+    };
+    let Some((width, height)) = dimensions.split_once('x') else {
+        return false;
+    };
+    !width.is_empty()
+        && !height.is_empty()
+        && width.chars().all(|ch| ch.is_ascii_digit())
+        && height.chars().all(|ch| ch.is_ascii_digit())
+}
+
 fn query_wallpapers(db_path: &Path, clause: &str) -> Result<Vec<Wallpaper>, String> {
     let connection = Connection::open(db_path)
         .map_err(|error| format!("Could not open wallpaper database: {error}"))?;
@@ -699,6 +778,39 @@ mod tests {
                 .files,
             0
         );
+
+        let _ = std::fs::remove_file(db_path);
+        let _ = std::fs::remove_dir_all(cache_dir);
+    }
+
+    #[test]
+    fn deletes_single_wallpaper_metadata_and_matching_cache_files() {
+        let db_path = temp_path("delete-wallpaper", "sqlite3");
+        let cache_dir = temp_path("delete-wallpaper-cache-dir", "dir");
+        let full_dir = cache_dir.join("full");
+        let screen_dir = cache_dir.join("screen");
+        std::fs::create_dir_all(&full_dir).expect("full cache dir should exist");
+        std::fs::create_dir_all(&screen_dir).expect("screen cache dir should exist");
+        let full_path = full_dir.join("pexels-42.jpg");
+        let screen_path = screen_dir.join("pexels-42-1920x1080.jpg");
+        let other_path = full_dir.join("pexels-43.jpg");
+        std::fs::write(&full_path, b"full").expect("full wallpaper should exist");
+        std::fs::write(&screen_path, b"screen").expect("screen wallpaper should exist");
+        std::fs::write(&other_path, b"other").expect("other wallpaper should exist");
+        init_database(&db_path).expect("database should initialize");
+
+        save_favorite(&db_path, &sample_wallpaper()).expect("favorite should save");
+        upsert_downloaded_wallpaper(&db_path, &sample_wallpaper(), &screen_path)
+            .expect("download should upsert");
+
+        delete_wallpaper(&db_path, &cache_dir, "pexels-42").expect("wallpaper should delete");
+        let library = list_library(&db_path).expect("library should list");
+
+        assert!(library.favorites.is_empty());
+        assert!(library.downloaded.is_empty());
+        assert!(!full_path.exists());
+        assert!(!screen_path.exists());
+        assert!(other_path.exists());
 
         let _ = std::fs::remove_file(db_path);
         let _ = std::fs::remove_dir_all(cache_dir);

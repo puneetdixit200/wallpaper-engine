@@ -25,6 +25,7 @@
   --accent-soft-text: #24563d;
   --warning-bg: #fde7d9;
   --warning-text: #7b3f25;
+  --danger: #b42318;
   --notice-bg: #fff7db;
   --preview-bg: #26352f;
   --preview-muted: #dbe3dc;
@@ -94,6 +95,7 @@ button {
   --accent-soft-text: #a6e2ba;
   --warning-bg: #4b2f24;
   --warning-text: #ffd5bd;
+  --danger: #fb7185;
   --notice-bg: #372f18;
   --preview-bg: #151f1b;
   --preview-muted: #d7e3dc;
@@ -636,6 +638,11 @@ select:focus-visible {
 .icon-button.saved {
   color: var(--accent-strong);
   background: var(--accent-soft);
+}
+
+.icon-button.danger {
+  color: var(--danger);
+  background: color-mix(in srgb, var(--danger) 12%, var(--surface-raised));
 }
 
 .wall-skeleton {

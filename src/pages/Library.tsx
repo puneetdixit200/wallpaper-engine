@@ -46,7 +46,7 @@ export function LibraryPage() {
             />
           ) : null}
           {library.favorites.map((wallpaper) => (
-            <WallCard key={wallpaper.id} wallpaper={wallpaper} />
+            <WallCard key={wallpaper.id} wallpaper={wallpaper} canDelete />
           ))}
         </div>
       </section>
@@ -64,7 +64,7 @@ export function LibraryPage() {
             />
           ) : null}
           {library.downloaded.map((wallpaper) => (
-            <WallCard key={wallpaper.id} wallpaper={wallpaper} />
+            <WallCard key={wallpaper.id} wallpaper={wallpaper} canDelete />
           ))}
         </div>
       </section>

@@ -55,6 +55,7 @@ function appValue(overrides: Partial<AppStateValue> = {}): AppStateValue {
       applyNextFromMood: asyncNoop,
       clearWallpaperCache: asyncNoop,
       clearLibrary: asyncNoop,
+      deleteWallpaper: asyncNoop,
       saveSettings: asyncNoop,
     },
     ...overrides,
@@ -131,6 +132,21 @@ describe("page render states", () => {
 
     expect(html).toContain('aria-label="Save favorite"');
     expect(html).not.toContain("icon-button saved");
+  });
+
+  it("shows delete action only for library wallpaper cards", () => {
+    const saved = wallpaper("saved", true);
+    const libraryHtml = renderWithState(
+      <WallCard wallpaper={saved} canDelete />,
+      appValue({
+        library: { favorites: [saved], downloaded: [] },
+        favoriteIds: new Set(["saved"]),
+      }),
+    );
+    const searchHtml = renderWithState(<WallCard wallpaper={saved} />, appValue());
+
+    expect(libraryHtml).toContain('aria-label="Delete wallpaper"');
+    expect(searchHtml).not.toContain('aria-label="Delete wallpaper"');
   });
 
   it("surfaces automatic change, after-close, and startup controls in settings", () => {

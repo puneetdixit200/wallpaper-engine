@@ -1,17 +1,20 @@
 import { convertFileSrc } from "@tauri-apps/api/core";
-import { Download, Heart, MonitorUp } from "lucide-react";
+import { Download, Heart, MonitorUp, Trash2 } from "lucide-react";
 import { useAppState } from "../appState";
+import { runConfirmed } from "../confirmAction";
 import { FallbackImage } from "./FallbackImage";
 import { Wallpaper } from "../types";
 
 interface WallCardProps {
   wallpaper: Wallpaper;
+  canDelete?: boolean;
 }
 
-export function WallCard({ wallpaper }: WallCardProps) {
+export function WallCard({ wallpaper, canDelete = false }: WallCardProps) {
   const { busy, favoriteIds, actions } = useAppState();
   const isSetting = busy === `set-${wallpaper.id}`;
   const isSaving = busy === `favorite-${wallpaper.id}`;
+  const isDeleting = busy === `delete-${wallpaper.id}`;
   const isSaved = favoriteIds.has(wallpaper.id);
   const image = wallpaper.localPath
     ? convertFileSrc(wallpaper.localPath)
@@ -66,6 +69,24 @@ export function WallCard({ wallpaper }: WallCardProps) {
             fill={isSaved ? "currentColor" : "none"}
           />
         </button>
+        {canDelete ? (
+          <button
+            aria-label="Delete wallpaper"
+            className="icon-button danger"
+            disabled={isDeleting}
+            onClick={() =>
+              void runConfirmed(
+                (message) => window.confirm(message),
+                "Delete this wallpaper from your library and cache?",
+                () => actions.deleteWallpaper(wallpaper),
+              )
+            }
+            title="Delete wallpaper"
+            type="button"
+          >
+            <Trash2 size={17} aria-hidden="true" />
+          </button>
+        ) : null}
       </div>
     </article>
   );

@@ -170,6 +170,12 @@ fn clear_library(state: State<'_, AppState>) -> Result<Library, String> {
 }
 
 #[tauri::command]
+fn delete_wallpaper(state: State<'_, AppState>, wallpaper: Wallpaper) -> Result<Library, String> {
+    cache::delete_wallpaper(&state.db_path, &state.cache_dir, &wallpaper.id)?;
+    cache::list_library(&state.db_path)
+}
+
+#[tauri::command]
 async fn apply_random_wallpaper(state: State<'_, AppState>) -> Result<Wallpaper, String> {
     let wallpaper = apply_random_wallpaper_inner(
         state.client.clone(),
@@ -649,6 +655,7 @@ pub fn run() {
             cache_stats,
             clear_cache,
             clear_library,
+            delete_wallpaper,
             set_favorite,
             apply_random_wallpaper
         ])

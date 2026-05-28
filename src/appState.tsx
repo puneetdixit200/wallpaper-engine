@@ -55,6 +55,7 @@ export interface AppActions {
   applyNextFromMood: () => Promise<void>;
   clearWallpaperCache: () => Promise<void>;
   clearLibrary: () => Promise<void>;
+  deleteWallpaper: (wallpaper: Wallpaper) => Promise<void>;
   saveSettings: (settings: AppSettings) => Promise<void>;
 }
 
@@ -375,6 +376,21 @@ export function AppStateProvider({ children }: AppStateProviderProps) {
     }
   }, [refreshCacheStats, runWithStatus]);
 
+  const deleteWallpaper = useCallback(
+    async (wallpaper: Wallpaper) => {
+      const nextLibrary = await runWithStatus(
+        `delete-${wallpaper.id}`,
+        () => invoke<Library>("delete_wallpaper", { wallpaper }),
+        "Wallpaper deleted.",
+      );
+      if (nextLibrary) {
+        dispatch({ type: "libraryLoaded", library: nextLibrary });
+        await refreshCacheStats();
+      }
+    },
+    [refreshCacheStats, runWithStatus],
+  );
+
   const hasAnyKey = useMemo(
     () =>
       state.settings.apiKeys.pexels.trim().length > 0 ||
@@ -411,6 +427,7 @@ export function AppStateProvider({ children }: AppStateProviderProps) {
       applyNextFromMood,
       clearWallpaperCache,
       clearLibrary,
+      deleteWallpaper,
       saveSettings,
     }),
     [
@@ -421,6 +438,7 @@ export function AppStateProvider({ children }: AppStateProviderProps) {
       changeSource,
       clearLibrary,
       clearWallpaperCache,
+      deleteWallpaper,
       saveFavorite,
       saveSettings,
       searchWallpapers,
