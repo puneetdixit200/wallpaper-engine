@@ -1,4 +1,5 @@
 import { FormEvent, useEffect, useState } from "react";
+import { Clock, Power, Rocket } from "lucide-react";
 import { useAppState } from "../appState";
 import { runConfirmed } from "../confirmAction";
 import {
@@ -37,6 +38,13 @@ const wallpaperLayouts: Array<{
   { label: "Tile", value: "tile" },
   { label: "Center", value: "center" },
   { label: "Span", value: "span" },
+];
+
+const autoChangePresets = [
+  { label: "Off", value: 0 },
+  { label: "15 min", value: 15 },
+  { label: "30 min", value: 30 },
+  { label: "1 hour", value: 60 },
 ];
 
 export function SettingsPage() {
@@ -85,6 +93,116 @@ export function SettingsPage() {
       </header>
 
       <form className="settings-form" onSubmit={submit}>
+        <section
+          aria-labelledby="automation-heading"
+          className="settings-section automation-section"
+        >
+          <div className="settings-section-heading">
+            <span className="section-icon" aria-hidden="true">
+              <Clock size={18} />
+            </span>
+            <div>
+              <h3 id="automation-heading">Automatic wallpaper changes</h3>
+              <p>
+                Change wallpapers on a schedule and keep the timer alive after
+                the window closes.
+              </p>
+            </div>
+          </div>
+
+          <div className="automation-controls">
+            <div
+              aria-label="Auto-change interval"
+              className="automation-presets"
+            >
+              {autoChangePresets.map((preset) => (
+                <button
+                  aria-pressed={draft.autoChangeMinutes === preset.value}
+                  className={
+                    draft.autoChangeMinutes === preset.value
+                      ? "automation-preset active"
+                      : "automation-preset"
+                  }
+                  key={preset.value}
+                  onClick={() =>
+                    updateDraft({ autoChangeMinutes: preset.value })
+                  }
+                  type="button"
+                >
+                  {preset.label}
+                </button>
+              ))}
+            </div>
+
+            <label className="automation-number">
+              <span>Change every</span>
+              <div className="number-input-wrap">
+                <input
+                  min={0}
+                  max={1440}
+                  onChange={(event) =>
+                    updateDraft({
+                      autoChangeMinutes: parseAutoChangeMinutes(
+                        event.currentTarget.value,
+                      ),
+                    })
+                  }
+                  step={1}
+                  type="number"
+                  value={draft.autoChangeMinutes}
+                />
+                <span>minutes</span>
+              </div>
+            </label>
+          </div>
+
+          <div className="toggle-grid">
+            <label className="toggle-row">
+              <input
+                checked={draft.runInBackground}
+                onChange={(event) =>
+                  updateDraft({ runInBackground: event.currentTarget.checked })
+                }
+                type="checkbox"
+              />
+              <span className="toggle-copy">
+                <strong>
+                  <Power size={16} aria-hidden="true" />
+                  Keep changing after close
+                </strong>
+                <span>Hide to tray instead of stopping the scheduler.</span>
+              </span>
+            </label>
+
+            <label className="toggle-row">
+              <input
+                checked={draft.launchAtStartup}
+                onChange={(event) =>
+                  updateDraft({ launchAtStartup: event.currentTarget.checked })
+                }
+                type="checkbox"
+              />
+              <span className="toggle-copy">
+                <strong>
+                  <Rocket size={16} aria-hidden="true" />
+                  Start at login
+                </strong>
+                <span>Launch hidden when background mode is enabled.</span>
+              </span>
+            </label>
+          </div>
+        </section>
+
+        <section
+          aria-labelledby="api-keys-heading"
+          className="settings-section"
+        >
+          <div className="settings-section-heading">
+            <div>
+              <h3 id="api-keys-heading">Provider keys</h3>
+            </div>
+          </div>
+
         <label>
           <span>Pexels API key</span>
           <input
@@ -141,6 +259,17 @@ export function SettingsPage() {
             />
           </label>
         </div>
+        </section>
+
+        <section
+          aria-labelledby="appearance-heading"
+          className="settings-section"
+        >
+          <div className="settings-section-heading">
+            <div>
+              <h3 id="appearance-heading">Wallpaper and storage</h3>
+            </div>
+          </div>
 
         <div className="form-grid">
           <label>
@@ -178,24 +307,6 @@ export function SettingsPage() {
                 </option>
               ))}
             </select>
-          </label>
-
-          <label>
-            <span>Auto-change minutes</span>
-            <input
-              min={0}
-              max={1440}
-              onChange={(event) =>
-                updateDraft({
-                  autoChangeMinutes: parseAutoChangeMinutes(
-                    event.currentTarget.value,
-                  ),
-                })
-              }
-              step={1}
-              type="number"
-              value={draft.autoChangeMinutes}
-            />
           </label>
 
           <label>
@@ -243,28 +354,7 @@ export function SettingsPage() {
           />
           <span>Allow Wallhaven NSFW</span>
         </label>
-
-        <label className="checkbox-row">
-          <input
-            checked={draft.runInBackground}
-            onChange={(event) =>
-              updateDraft({ runInBackground: event.currentTarget.checked })
-            }
-            type="checkbox"
-          />
-          <span>Run in background after closing</span>
-        </label>
-
-        <label className="checkbox-row">
-          <input
-            checked={draft.launchAtStartup}
-            onChange={(event) =>
-              updateDraft({ launchAtStartup: event.currentTarget.checked })
-            }
-            type="checkbox"
-          />
-          <span>Start at login</span>
-        </label>
+        </section>
 
         <div className="settings-actions">
           <button className="primary-button" disabled={busy === "settings"} type="submit">

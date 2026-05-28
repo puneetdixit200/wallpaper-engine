@@ -69,7 +69,30 @@ fn database_initialization_count_for_tests(db_path: &Path) -> usize {
 }
 
 pub fn save_favorite(db_path: &Path, wallpaper: &Wallpaper) -> Result<(), String> {
-    upsert_wallpaper(db_path, wallpaper, None, true, false)
+    set_favorite(db_path, wallpaper, true)
+}
+
+pub fn set_favorite(db_path: &Path, wallpaper: &Wallpaper, favorite: bool) -> Result<(), String> {
+    if favorite {
+        return upsert_wallpaper(db_path, wallpaper, None, true, false);
+    }
+
+    init_database(db_path)?;
+    let connection = Connection::open(db_path)
+        .map_err(|error| format!("Could not open wallpaper database: {error}"))?;
+    connection
+        .execute(
+            "UPDATE wallpapers SET is_favorite = 0 WHERE id = ?1",
+            params![wallpaper.id],
+        )
+        .map_err(|error| format!("Could not update favorite metadata: {error}"))?;
+    connection
+        .execute(
+            "DELETE FROM wallpapers WHERE id = ?1 AND is_favorite = 0 AND local_path IS NULL AND used_count = 0",
+            params![wallpaper.id],
+        )
+        .map_err(|error| format!("Could not remove unused favorite metadata: {error}"))?;
+    Ok(())
 }
 
 pub fn upsert_downloaded_wallpaper(
@@ -165,6 +188,24 @@ pub fn clear_library(db_path: &Path) -> Result<(), String> {
     init_database(db_path)?;
     let connection = Connection::open(db_path)
         .map_err(|error| format!("Could not open wallpaper database: {error}"))?;
+    let mut statement = connection
+        .prepare("SELECT DISTINCT local_path FROM wallpapers WHERE local_path IS NOT NULL")
+        .map_err(|error| format!("Could not prepare wallpaper cleanup query: {error}"))?;
+    let wallpaper_paths = statement
+        .query_map([], |row| row.get::<_, String>(0))
+        .map_err(|error| format!("Could not query wallpaper cleanup paths: {error}"))?
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|error| format!("Could not read wallpaper cleanup paths: {error}"))?;
+    drop(statement);
+
+    for wallpaper_path in wallpaper_paths {
+        let wallpaper_path = PathBuf::from(wallpaper_path);
+        if wallpaper_path.exists() {
+            fs::remove_file(&wallpaper_path)
+                .map_err(|error| format!("Could not delete wallpaper file: {error}"))?;
+        }
+    }
+
     connection
         .execute("DELETE FROM wallpapers", [])
         .map_err(|error| format!("Could not clear library: {error}"))?;
@@ -606,9 +647,10 @@ mod tests {
     }
 
     #[test]
-    fn clears_library_metadata() {
+    fn clears_library_metadata_and_wallpaper_files() {
         let db_path = temp_path("clear-library", "sqlite3");
         let local_path = temp_path("clear-library-wallpaper", "jpg");
+        std::fs::write(&local_path, b"wallpaper").expect("wallpaper file should exist");
         init_database(&db_path).expect("database should initialize");
 
         save_favorite(&db_path, &sample_wallpaper()).expect("favorite should save");
@@ -620,7 +662,32 @@ mod tests {
 
         assert!(library.favorites.is_empty());
         assert!(library.downloaded.is_empty());
+        assert!(!local_path.exists());
 
         let _ = std::fs::remove_file(db_path);
+    }
+
+    #[test]
+    fn removes_favorite_without_removing_downloaded_wallpaper() {
+        let db_path = temp_path("unfavorite", "sqlite3");
+        let local_path = temp_path("unfavorite-wallpaper", "jpg");
+        std::fs::write(&local_path, b"wallpaper").expect("wallpaper file should exist");
+        init_database(&db_path).expect("database should initialize");
+
+        let wallpaper = sample_wallpaper();
+        save_favorite(&db_path, &wallpaper).expect("favorite should save");
+        upsert_downloaded_wallpaper(&db_path, &wallpaper, &local_path)
+            .expect("download should upsert");
+
+        set_favorite(&db_path, &wallpaper, false).expect("favorite should unset");
+        let library = list_library(&db_path).expect("library should list");
+
+        assert!(library.favorites.is_empty());
+        assert_eq!(library.downloaded.len(), 1);
+        assert!(!library.downloaded[0].is_favorite);
+        assert!(local_path.exists());
+
+        let _ = std::fs::remove_file(db_path);
+        let _ = std::fs::remove_file(local_path);
     }
 }

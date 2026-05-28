@@ -117,7 +117,7 @@ pub fn current_desktop_wallpaper() -> Result<Option<PathBuf>, String> {
 pub fn current_desktop_wallpaper() -> Result<Option<PathBuf>, String> {
     let output = Command::new("osascript")
         .arg("-e")
-        .arg("tell application \"System Events\" to get POSIX path of (picture of desktop 1 as alias)")
+        .arg(macos_current_wallpaper_script())
         .output()
         .map_err(|error| format!("osascript failed: {error}"))?;
     if !output.status.success() {
@@ -577,7 +577,8 @@ fn normalize_wallpaper_path(path: &Path) -> String {
 #[cfg(target_os = "windows")]
 fn set_windows_wallpaper_style(layout: WallpaperLayoutPreference) -> Result<(), String> {
     for (name, value) in windows_layout_registry_values(layout) {
-        let status = Command::new("reg")
+        let mut command = silent_platform_command("reg");
+        let status = command
             .args([
                 "add",
                 r"HKCU\Control Panel\Desktop",
@@ -600,6 +601,18 @@ fn set_windows_wallpaper_style(layout: WallpaperLayoutPreference) -> Result<(), 
     }
 
     Ok(())
+}
+
+#[cfg(target_os = "windows")]
+const WINDOWS_CREATE_NO_WINDOW: u32 = 0x0800_0000;
+
+#[cfg(target_os = "windows")]
+fn silent_platform_command(program: &str) -> Command {
+    use std::os::windows::process::CommandExt;
+
+    let mut command = Command::new(program);
+    command.creation_flags(WINDOWS_CREATE_NO_WINDOW);
+    command
 }
 
 fn file_uri(path: &Path) -> String {
@@ -684,6 +697,11 @@ fn escape_osascript_path(path: &Path) -> String {
     path.to_string_lossy()
         .replace('\\', "\\\\")
         .replace('"', "\\\"")
+}
+
+#[cfg_attr(not(target_os = "macos"), allow(dead_code))]
+fn macos_current_wallpaper_script() -> &'static str {
+    "tell application \"System Events\" to get picture of desktop 1"
 }
 
 #[cfg(target_os = "macos")]
@@ -821,7 +839,20 @@ mod tests {
             parse_current_wallpaper_output(" /Users/me/Pictures/wall.jpg\n"),
             Some(PathBuf::from("/Users/me/Pictures/wall.jpg"))
         );
+        assert_eq!(
+            parse_current_wallpaper_output("\"/Users/me/Pictures/wall one.jpg\"\n"),
+            Some(PathBuf::from("/Users/me/Pictures/wall one.jpg"))
+        );
         assert_eq!(parse_current_wallpaper_output(""), None);
+    }
+
+    #[test]
+    fn macos_current_wallpaper_script_reads_plain_picture_path() {
+        let script = macos_current_wallpaper_script();
+
+        assert!(script.contains("get picture of desktop 1"));
+        assert!(!script.contains("as alias"));
+        assert!(!script.contains("POSIX path"));
     }
 
     #[test]
@@ -841,6 +872,12 @@ mod tests {
                 [("WallpaperStyle", style), ("TileWallpaper", tile)]
             );
         }
+    }
+
+    #[cfg(target_os = "windows")]
+    #[test]
+    fn windows_registry_helpers_suppress_console_windows() {
+        assert_eq!(WINDOWS_CREATE_NO_WINDOW, 0x0800_0000);
     }
 
     #[test]

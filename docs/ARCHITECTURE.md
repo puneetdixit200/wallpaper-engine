@@ -152,6 +152,8 @@ pub struct AppState {
     cache_dir: PathBuf,
     scheduler: Mutex<Option<JoinHandle<()>>>,
     wallpaper_lock: Arc<Mutex<Option<wallpaper::WallpaperLock>>>,
+    startup_wallpaper: Arc<Mutex<Option<wallpaper::WallpaperLock>>>,
+    explicit_exit_requested: AtomicBool,
 }
 ```
 
@@ -175,7 +177,9 @@ Settings are stored as pretty JSON with camelCase keys:
   "cacheLimitMb": 1024,
   "allowNsfwWallhaven": false,
   "theme": "system",
-  "wallpaperLayout": "fit"
+  "wallpaperLayout": "fit",
+  "runInBackground": false,
+  "launchAtStartup": false
 }
 ```
 
@@ -193,6 +197,8 @@ Runtime effects:
 - `resolution` changes provider filtering and Wallhaven `atleast` values, and is used as a fallback screen size for resizing.
 - `cacheLimitMb` is enforced after downloads by evicting least-recently-used cached wallpapers.
 - `allowNsfwWallhaven` enables NSFW Wallhaven purity only when a Wallhaven key is also present.
+- `runInBackground` keeps the scheduler alive after close or OS-level quit.
+- `launchAtStartup` registers a hidden autostart entry. A positive `autoChangeMinutes` is sanitized to enable both background runtime and startup so scheduled wallpaper changes survive relaunches.
 
 ## Provider Layer
 

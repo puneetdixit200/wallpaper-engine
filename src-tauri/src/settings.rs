@@ -123,6 +123,12 @@ impl AppSettings {
         self.api_keys.deviantart = self.api_keys.deviantart.trim().to_string();
         self.cache_limit_mb = self.cache_limit_mb.clamp(128, 10_240);
         self.auto_change_minutes = self.auto_change_minutes.min(1_440);
+        if self.auto_change_minutes > 0 {
+            self.launch_at_startup = true;
+        }
+        if self.auto_change_minutes > 0 || self.launch_at_startup {
+            self.run_in_background = true;
+        }
         self
     }
 }
@@ -257,6 +263,32 @@ mod tests {
         assert!(loaded.launch_at_startup);
 
         let _ = fs::remove_file(path);
+    }
+
+    #[test]
+    fn auto_change_interval_implies_background_runtime() {
+        let settings = AppSettings {
+            auto_change_minutes: 15,
+            run_in_background: false,
+            launch_at_startup: false,
+            ..AppSettings::default()
+        };
+
+        let sanitized = settings.sanitized();
+
+        assert!(sanitized.run_in_background);
+        assert!(sanitized.launch_at_startup);
+    }
+
+    #[test]
+    fn startup_launch_implies_background_runtime() {
+        let settings = AppSettings {
+            launch_at_startup: true,
+            run_in_background: false,
+            ..AppSettings::default()
+        };
+
+        assert!(settings.sanitized().run_in_background);
     }
 
     #[test]

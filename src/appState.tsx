@@ -280,19 +280,20 @@ export function AppStateProvider({ children }: AppStateProviderProps) {
 
   const saveFavorite = useCallback(
     async (wallpaper: Wallpaper) => {
-      const saved = await runWithStatus(
-        `favorite-${wallpaper.id}`,
-        async () => {
-          await invoke("save_favorite", { wallpaper });
-          return true;
-        },
-        "Saved to favorites.",
+      const isSaved = state.library.favorites.some(
+        (favorite) => favorite.id === wallpaper.id,
       );
-      if (saved) {
-        await refreshLibrary();
+      const favorite = !isSaved;
+      const nextLibrary = await runWithStatus(
+        `favorite-${wallpaper.id}`,
+        () => invoke<Library>("set_favorite", { wallpaper, favorite }),
+        favorite ? "Saved to favorites." : "Removed from favorites.",
+      );
+      if (nextLibrary) {
+        dispatch({ type: "libraryLoaded", library: nextLibrary });
       }
     },
-    [refreshLibrary, runWithStatus],
+    [runWithStatus, state.library.favorites],
   );
 
   const applyRandomWallpaper = useCallback(async () => {
@@ -370,8 +371,9 @@ export function AppStateProvider({ children }: AppStateProviderProps) {
     );
     if (nextLibrary) {
       dispatch({ type: "libraryLoaded", library: nextLibrary });
+      await refreshCacheStats();
     }
-  }, [runWithStatus]);
+  }, [refreshCacheStats, runWithStatus]);
 
   const hasAnyKey = useMemo(
     () =>

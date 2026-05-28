@@ -13,6 +13,7 @@ import {
 } from "./settingsFlow";
 import { resolveThemePreference } from "./themePreference";
 import { ViewName } from "./types";
+import { resetDocumentScroll } from "./viewScroll";
 import "./App.css";
 
 const navItems: Array<{ id: ViewName; label: string; icon: typeof Home }> = [
@@ -60,6 +61,10 @@ function AppShell() {
   const shouldShowBackgroundPrompt =
     !backgroundPromptDismissed &&
     shouldAskForBackgroundPermission(settings, settings);
+
+  useEffect(() => {
+    resetDocumentScroll();
+  }, [activeView]);
 
   const content =
     activeView === "home" ? (

@@ -11,7 +11,8 @@ use settings::{
     WallpaperLayoutPreference,
 };
 use std::fs;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
 use tauri::async_runtime::{JoinHandle, Mutex};
@@ -31,12 +32,25 @@ pub struct AppState {
     scheduler: Mutex<Option<JoinHandle<()>>>,
     wallpaper_lock: Arc<Mutex<Option<wallpaper::WallpaperLock>>>,
     startup_wallpaper: Arc<Mutex<Option<wallpaper::WallpaperLock>>>,
+    explicit_exit_requested: AtomicBool,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum WindowCloseAction {
     HideToBackground,
     Exit,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum AppExitAction {
+    KeepRunningInBackground,
+    ExitProcess,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum AppActivationMode {
+    Foreground,
+    Background,
 }
 
 #[tauri::command]
@@ -121,6 +135,16 @@ async fn set_wallpaper(
 #[tauri::command]
 fn save_favorite(state: State<'_, AppState>, wallpaper: Wallpaper) -> Result<(), String> {
     cache::save_favorite(&state.db_path, &wallpaper)
+}
+
+#[tauri::command]
+fn set_favorite(
+    state: State<'_, AppState>,
+    wallpaper: Wallpaper,
+    favorite: bool,
+) -> Result<Library, String> {
+    cache::set_favorite(&state.db_path, &wallpaper, favorite)?;
+    cache::list_library(&state.db_path)
 }
 
 #[tauri::command]
@@ -322,6 +346,22 @@ fn window_close_action(settings: &AppSettings) -> WindowCloseAction {
     }
 }
 
+fn app_exit_action(settings: &AppSettings, explicit_exit_requested: bool) -> AppExitAction {
+    if explicit_exit_requested || !should_run_in_background(settings) {
+        AppExitAction::ExitProcess
+    } else {
+        AppExitAction::KeepRunningInBackground
+    }
+}
+
+fn activation_mode_for_visible_window(is_visible: bool) -> AppActivationMode {
+    if is_visible {
+        AppActivationMode::Foreground
+    } else {
+        AppActivationMode::Background
+    }
+}
+
 fn launch_args_request_background<I, S>(args: I) -> bool
 where
     I: IntoIterator<Item = S>,
@@ -412,11 +452,33 @@ fn restore_startup_wallpaper_before_exit(app_handle: &tauri::AppHandle) {
 }
 
 fn show_main_window(app_handle: &tauri::AppHandle) {
+    apply_activation_mode(app_handle, activation_mode_for_visible_window(true));
     if let Some(window) = app_handle.get_webview_window("main") {
         let _ = window.unminimize();
         let _ = window.show();
         let _ = window.set_focus();
     }
+}
+
+fn hide_main_window(app_handle: &tauri::AppHandle) {
+    if let Some(window) = app_handle.get_webview_window("main") {
+        let _ = window.hide();
+    }
+    apply_activation_mode(app_handle, activation_mode_for_visible_window(false));
+}
+
+fn apply_activation_mode(app_handle: &tauri::AppHandle, mode: AppActivationMode) {
+    #[cfg(target_os = "macos")]
+    {
+        let policy = match mode {
+            AppActivationMode::Foreground => tauri::ActivationPolicy::Regular,
+            AppActivationMode::Background => tauri::ActivationPolicy::Accessory,
+        };
+        let _ = app_handle.set_activation_policy(policy);
+    }
+
+    #[cfg(not(target_os = "macos"))]
+    let _ = (app_handle, mode);
 }
 
 #[cfg(target_os = "windows")]
@@ -440,7 +502,7 @@ fn hide_minimized_window_to_tray(app_handle: &tauri::AppHandle, label: &str) {
 
 fn close_window_or_background_service(
     app_handle: &tauri::AppHandle,
-    label: &str,
+    _label: &str,
     api: &tauri::CloseRequestApi,
 ) {
     let settings = app_handle
@@ -451,13 +513,35 @@ fn close_window_or_background_service(
     match window_close_action(&settings) {
         WindowCloseAction::HideToBackground => {
             api.prevent_close();
-            if let Some(window) = app_handle.get_webview_window(label) {
-                let _ = window.hide();
-            }
+            hide_main_window(app_handle);
         }
         WindowCloseAction::Exit => {
-            restore_startup_wallpaper_before_exit(app_handle);
             app_handle.exit(0);
+        }
+    }
+}
+
+fn request_explicit_exit(app_handle: &tauri::AppHandle) {
+    if let Some(state) = app_handle.try_state::<AppState>() {
+        state.explicit_exit_requested.store(true, Ordering::SeqCst);
+    }
+    app_handle.exit(0);
+}
+
+fn handle_exit_requested(app_handle: &tauri::AppHandle, api: &tauri::ExitRequestApi) {
+    let Some(state) = app_handle.try_state::<AppState>() else {
+        return;
+    };
+    let settings = load_settings_from_path(&state.settings_path).unwrap_or_default();
+    let explicit_exit = state.explicit_exit_requested.load(Ordering::SeqCst);
+
+    match app_exit_action(&settings, explicit_exit) {
+        AppExitAction::KeepRunningInBackground => {
+            api.prevent_exit();
+            hide_main_window(app_handle);
+        }
+        AppExitAction::ExitProcess => {
+            restore_startup_wallpaper_before_exit(app_handle);
         }
     }
 }
@@ -474,7 +558,7 @@ fn setup_tray(app: &tauri::App) -> Result<(), Box<dyn std::error::Error>> {
         .show_menu_on_left_click(true)
         .on_menu_event(|app_handle, event| match event.id().as_ref() {
             TRAY_OPEN_ID => show_main_window(app_handle),
-            TRAY_QUIT_ID => app_handle.exit(0),
+            TRAY_QUIT_ID => request_explicit_exit(app_handle),
             _ => {}
         });
 
@@ -488,6 +572,15 @@ fn setup_tray(app: &tauri::App) -> Result<(), Box<dyn std::error::Error>> {
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+    #[cfg(target_os = "macos")]
+    if std::env::current_exe()
+        .ok()
+        .as_deref()
+        .is_some_and(is_macos_dmg_staging_executable)
+    {
+        return;
+    }
+
     let app = tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_autostart::init(
@@ -527,6 +620,7 @@ pub fn run() {
                 scheduler: Mutex::new(None),
                 wallpaper_lock,
                 startup_wallpaper,
+                explicit_exit_requested: AtomicBool::new(false),
             });
             if let Some(interval) = startup_interval {
                 let state = app.state::<AppState>();
@@ -538,9 +632,9 @@ pub fn run() {
             }
             let _ = sync_autostart(app.handle(), &settings);
             if start_hidden {
-                if let Some(window) = app.get_webview_window("main") {
-                    let _ = window.hide();
-                }
+                hide_main_window(app.handle());
+            } else {
+                show_main_window(app.handle());
             }
             Ok(())
         })
@@ -555,6 +649,7 @@ pub fn run() {
             cache_stats,
             clear_cache,
             clear_library,
+            set_favorite,
             apply_random_wallpaper
         ])
         .build(tauri::generate_context!())
@@ -576,8 +671,8 @@ pub fn run() {
         } => {
             hide_minimized_window_to_tray(app_handle, &label);
         }
-        tauri::RunEvent::ExitRequested { .. } => {
-            restore_startup_wallpaper_before_exit(app_handle);
+        tauri::RunEvent::ExitRequested { api, .. } => {
+            handle_exit_requested(app_handle, &api);
         }
         #[cfg(target_os = "macos")]
         tauri::RunEvent::Reopen { .. } => {
@@ -585,6 +680,17 @@ pub fn run() {
         }
         _ => {}
     });
+}
+
+fn is_macos_dmg_staging_executable(path: &Path) -> bool {
+    let parts = path
+        .components()
+        .map(|component| component.as_os_str().to_string_lossy())
+        .collect::<Vec<_>>();
+
+    parts
+        .windows(2)
+        .any(|window| window[0] == "Volumes" && window[1].starts_with("dmg."))
 }
 
 #[cfg(test)]
@@ -651,6 +757,19 @@ mod config_tests {
             startup_scheduler_interval(&settings),
             Some(Duration::from_secs(15 * 60))
         );
+    }
+
+    #[test]
+    fn auto_change_settings_enable_startup_after_sanitization() {
+        let settings = AppSettings {
+            auto_change_minutes: 15,
+            launch_at_startup: false,
+            run_in_background: false,
+            ..AppSettings::default()
+        }
+        .sanitized();
+
+        assert!(desired_autostart_state(&settings));
     }
 
     #[test]
@@ -733,5 +852,69 @@ mod config_tests {
             "--hidden"
         ]));
         assert!(!launch_args_request_background(["wallpaper-engine"]));
+    }
+
+    #[test]
+    fn os_level_quit_keeps_background_scheduler_alive() {
+        let background = AppSettings {
+            auto_change_minutes: 10,
+            run_in_background: true,
+            ..AppSettings::default()
+        };
+
+        assert_eq!(
+            app_exit_action(&background, false),
+            AppExitAction::KeepRunningInBackground
+        );
+    }
+
+    #[test]
+    fn explicit_tray_quit_is_the_real_exit_path() {
+        let background = AppSettings {
+            auto_change_minutes: 10,
+            run_in_background: true,
+            ..AppSettings::default()
+        };
+
+        assert_eq!(
+            app_exit_action(&background, true),
+            AppExitAction::ExitProcess
+        );
+    }
+
+    #[test]
+    fn hidden_window_uses_background_activation_mode() {
+        assert_eq!(
+            activation_mode_for_visible_window(false),
+            AppActivationMode::Background
+        );
+        assert_eq!(
+            activation_mode_for_visible_window(true),
+            AppActivationMode::Foreground
+        );
+    }
+
+    #[test]
+    fn bundled_window_starts_hidden_to_avoid_autostart_flash() {
+        let config: Value =
+            serde_json::from_str(include_str!("../tauri.conf.json")).expect("config is valid JSON");
+        let visible = config
+            .pointer("/app/windows/0/visible")
+            .and_then(Value::as_bool);
+
+        assert_eq!(visible, Some(false));
+    }
+
+    #[test]
+    fn macos_dmg_packaging_staging_launch_exits_immediately() {
+        assert!(is_macos_dmg_staging_executable(Path::new(
+            "/Volumes/dmg.rclU6V/Wallpaper Engine.app/Contents/MacOS/wallpaper-engine"
+        )));
+        assert!(!is_macos_dmg_staging_executable(Path::new(
+            "/Volumes/Wallpaper Engine/Wallpaper Engine.app/Contents/MacOS/wallpaper-engine"
+        )));
+        assert!(!is_macos_dmg_staging_executable(Path::new(
+            "/Applications/Wallpaper Engine.app/Contents/MacOS/wallpaper-engine"
+        )));
     }
 }

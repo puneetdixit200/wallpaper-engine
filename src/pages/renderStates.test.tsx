@@ -9,6 +9,7 @@ import {
 import { WallCard } from "../components/WallCard";
 import { LibraryPage } from "./Library";
 import { SearchPage } from "./Search";
+import { SettingsPage } from "./Settings";
 import { Wallpaper } from "../types";
 
 function wallpaper(id: string, favorite = false): Wallpaper {
@@ -101,5 +102,28 @@ describe("page render states", () => {
 
     expect(html).toContain('aria-label="Saved favorite"');
     expect(html).toContain("icon-button saved");
+  });
+
+  it("does not render stale wallpaper favorite flags as saved", () => {
+    const stale = wallpaper("stale", true);
+    const html = renderWithState(
+      <WallCard wallpaper={stale} />,
+      appValue({
+        library: { favorites: [], downloaded: [] },
+        favoriteIds: new Set(),
+      }),
+    );
+
+    expect(html).toContain('aria-label="Save favorite"');
+    expect(html).not.toContain("icon-button saved");
+  });
+
+  it("surfaces automatic change, after-close, and startup controls in settings", () => {
+    const html = renderWithState(<SettingsPage />, appValue());
+
+    expect(html).toContain("Automatic wallpaper changes");
+    expect(html).toContain("Change every");
+    expect(html).toContain("Keep changing after close");
+    expect(html).toContain("Start at login");
   });
 });

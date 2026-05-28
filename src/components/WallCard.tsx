@@ -12,7 +12,7 @@ export function WallCard({ wallpaper }: WallCardProps) {
   const { busy, favoriteIds, actions } = useAppState();
   const isSetting = busy === `set-${wallpaper.id}`;
   const isSaving = busy === `favorite-${wallpaper.id}`;
-  const isSaved = wallpaper.isFavorite || favoriteIds.has(wallpaper.id);
+  const isSaved = favoriteIds.has(wallpaper.id);
   const image = wallpaper.localPath
     ? convertFileSrc(wallpaper.localPath)
     : wallpaper.thumbUrl || wallpaper.fullUrl || "";
