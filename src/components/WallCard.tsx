@@ -1,7 +1,6 @@
 import { convertFileSrc } from "@tauri-apps/api/core";
 import { Download, Heart, MonitorUp, Trash2 } from "lucide-react";
 import { useAppState } from "../appState";
-import { runConfirmed } from "../confirmAction";
 import { FallbackImage } from "./FallbackImage";
 import { Wallpaper } from "../types";
 
@@ -74,13 +73,7 @@ export function WallCard({ wallpaper, canDelete = false }: WallCardProps) {
             aria-label="Delete wallpaper"
             className="icon-button danger"
             disabled={isDeleting}
-            onClick={() =>
-              void runConfirmed(
-                (message) => window.confirm(message),
-                "Delete this wallpaper from your library and cache?",
-                () => actions.deleteWallpaper(wallpaper),
-              )
-            }
+            onClick={() => void actions.deleteWallpaper(wallpaper)}
             title="Delete wallpaper"
             type="button"
           >
