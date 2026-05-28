@@ -46,7 +46,7 @@
 
 body {
   margin: 0;
-  min-width: 360px;
+  min-width: 320px;
   min-height: 100vh;
 }
 
@@ -62,7 +62,7 @@ button {
 
 .app-shell {
   display: grid;
-  grid-template-columns: 250px minmax(0, 1fr);
+  grid-template-columns: clamp(210px, 22vw, 250px) minmax(0, 1fr);
   min-height: 100vh;
   color: var(--text);
   background:
@@ -123,6 +123,11 @@ button {
   display: flex;
   align-items: center;
   gap: 12px;
+  min-width: 0;
+}
+
+.brand > div:last-child {
+  min-width: 0;
 }
 
 .brand-mark {
@@ -146,12 +151,14 @@ button {
 .brand h1 {
   font-size: 1.02rem;
   letter-spacing: 0;
+  overflow-wrap: anywhere;
 }
 
 .brand p {
   margin-top: 3px;
   color: var(--sidebar-muted);
   font-size: 0.79rem;
+  overflow-wrap: anywhere;
 }
 
 .nav-list {
@@ -172,6 +179,14 @@ button {
   cursor: pointer;
   min-width: 0;
   text-align: left;
+}
+
+.nav-item span,
+.sidebar-footer span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .nav-item:hover,
@@ -222,6 +237,7 @@ button {
   flex-wrap: wrap;
   gap: 10px;
   flex-shrink: 0;
+  max-width: 100%;
 }
 
 .view-stack {
@@ -235,6 +251,7 @@ button {
   display: flex;
   align-items: center;
   justify-content: space-between;
+  flex-wrap: wrap;
   gap: 18px;
   min-width: 0;
 }
@@ -279,7 +296,8 @@ button {
 .preview-panel {
   position: relative;
   overflow: hidden;
-  min-height: 430px;
+  height: clamp(320px, 50vh, 430px);
+  min-height: 0;
   border-radius: 8px;
   background: var(--preview-bg);
   box-shadow: var(--shadow);
@@ -297,7 +315,8 @@ button {
   display: grid;
   place-items: center;
   width: 100%;
-  height: 430px;
+  height: 100%;
+  min-height: 100%;
   color: var(--preview-muted);
   background:
     linear-gradient(120deg, rgba(188, 228, 197, 0.18), transparent 44%),
@@ -324,6 +343,10 @@ button {
   padding: 22px;
   color: #ffffff;
   background: linear-gradient(0deg, rgba(12, 17, 15, 0.78), rgba(12, 17, 15, 0));
+}
+
+.preview-overlay > div:first-child {
+  min-width: 0;
 }
 
 .preview-overlay strong,
@@ -372,8 +395,11 @@ button {
   align-items: center;
   justify-content: center;
   gap: 8px;
+  max-width: 100%;
   padding: 0 15px;
   font-weight: 800;
+  text-align: center;
+  white-space: normal;
 }
 
 .primary-button {
@@ -525,6 +551,8 @@ select:focus-visible {
   display: flex;
   flex-wrap: wrap;
   justify-content: flex-end;
+  gap: 4px;
+  min-width: 0;
   max-width: 650px;
   padding: 4px;
   border-radius: 8px;
@@ -532,6 +560,7 @@ select:focus-visible {
 }
 
 .segmented-control button {
+  flex: 1 1 auto;
   padding: 0 13px;
   color: var(--text);
   background: transparent;
@@ -576,7 +605,7 @@ select:focus-visible {
 
 .wall-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(210px, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 210px), 1fr));
   gap: 14px;
 }
 
@@ -588,7 +617,7 @@ select:focus-visible {
 }
 
 .wall-thumb {
-  height: 150px;
+  aspect-ratio: 16 / 10;
   background: var(--surface-muted);
 }
 
@@ -603,12 +632,22 @@ select:focus-visible {
   display: flex;
   justify-content: space-between;
   gap: 10px;
+  min-width: 0;
   padding: 11px 12px 8px;
+}
+
+.wall-meta > div {
+  min-width: 0;
+}
+
+.wall-meta > span {
+  flex-shrink: 0;
 }
 
 .wall-meta strong,
 .wall-meta span {
   display: block;
+  overflow-wrap: anywhere;
 }
 
 .wall-meta strong {
@@ -697,6 +736,7 @@ select:focus-visible {
   display: grid;
   gap: 20px;
   padding: 22px;
+  min-width: 0;
   border-radius: 8px;
   background: var(--surface);
   border: 1px solid var(--border);
@@ -718,11 +758,13 @@ select:focus-visible {
   display: flex;
   align-items: flex-start;
   gap: 11px;
+  min-width: 0;
 }
 
 .settings-section-heading h3,
 .settings-section-heading p {
   margin: 0;
+  overflow-wrap: anywhere;
 }
 
 .settings-section-heading h3 {
@@ -894,12 +936,15 @@ select:focus-visible {
     display: grid;
     grid-template-columns: 1fr;
     gap: 14px;
+    height: auto;
+    max-height: none;
+    overflow: visible;
     padding: 16px;
   }
 
   .nav-list {
-    grid-template-columns: repeat(4, 72px);
-    justify-content: space-between;
+    grid-template-columns: repeat(4, minmax(58px, 1fr));
+    justify-content: stretch;
     overflow: hidden;
     width: 100%;
   }
@@ -907,7 +952,7 @@ select:focus-visible {
   .nav-item {
     justify-content: center;
     padding: 10px 0;
-    width: 72px;
+    width: 100%;
   }
 
   .nav-item span,
@@ -933,7 +978,7 @@ select:focus-visible {
 
   .preview-panel,
   .preview-empty {
-    min-height: 340px;
+    height: clamp(280px, 46vh, 360px);
   }
 
   .form-grid {
@@ -944,16 +989,21 @@ select:focus-visible {
   .toggle-grid {
     grid-template-columns: 1fr;
   }
+
+  .segmented-control {
+    justify-content: flex-start;
+    width: 100%;
+    max-width: none;
+  }
 }
 
 @media (max-width: 560px) {
   .nav-list {
-    grid-template-columns: repeat(4, 56px);
-    justify-content: start;
+    grid-template-columns: repeat(4, minmax(48px, 1fr));
   }
 
   .nav-item {
-    width: 56px;
+    min-height: 44px;
   }
 
   .search-bar {
@@ -970,6 +1020,48 @@ select:focus-visible {
 
   .automation-presets {
     grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .content-shell {
+    padding: 14px;
+  }
+
+  .permission-banner,
+  .settings-form {
+    padding: 14px;
+  }
+
+  .settings-actions {
+    align-items: stretch;
+  }
+
+  .settings-actions .primary-button,
+  .settings-actions .secondary-button {
+    flex: 1 1 100%;
+  }
+
+  .settings-actions span {
+    width: 100%;
+    margin-left: 0;
+  }
+}
+
+@media (max-width: 420px) {
+  .brand p {
+    display: none;
+  }
+
+  .view-header {
+    gap: 12px;
+  }
+
+  .preview-overlay {
+    padding: 16px;
+  }
+
+  .preview-panel,
+  .preview-empty {
+    height: 280px;
   }
 }
 

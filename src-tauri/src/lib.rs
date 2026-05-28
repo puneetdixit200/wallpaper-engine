@@ -913,6 +913,21 @@ mod config_tests {
     }
 
     #[test]
+    fn bundled_window_allows_compact_resizing() {
+        let config: Value =
+            serde_json::from_str(include_str!("../tauri.conf.json")).expect("config is valid JSON");
+        let min_width = config
+            .pointer("/app/windows/0/minWidth")
+            .and_then(Value::as_u64);
+        let min_height = config
+            .pointer("/app/windows/0/minHeight")
+            .and_then(Value::as_u64);
+
+        assert!(min_width.is_some_and(|width| width <= 420));
+        assert!(min_height.is_some_and(|height| height <= 560));
+    }
+
+    #[test]
     fn macos_dmg_packaging_staging_launch_exits_immediately() {
         assert!(is_macos_dmg_staging_executable(Path::new(
             "/Volumes/dmg.rclU6V/Wallpaper Engine.app/Contents/MacOS/wallpaper-engine"
