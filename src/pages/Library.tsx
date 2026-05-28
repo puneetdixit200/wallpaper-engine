@@ -1,5 +1,4 @@
 import { useAppState } from "../appState";
-import { runConfirmed } from "../confirmAction";
 import { EmptyState } from "../components/EmptyState";
 import { WallCard } from "../components/WallCard";
 
@@ -20,13 +19,7 @@ export function LibraryPage() {
         <button
           className="secondary-button"
           disabled={!canClearLibrary || busy === "clear-library"}
-          onClick={() =>
-            void runConfirmed(
-              (message) => window.confirm(message),
-              "Clear all saved, downloaded, and cached wallpaper files?",
-              actions.clearLibrary,
-            )
-          }
+          onClick={() => void actions.clearLibrary()}
           type="button"
         >
           Clear library

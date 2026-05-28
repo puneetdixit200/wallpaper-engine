@@ -170,8 +170,8 @@ fn clear_library(state: State<'_, AppState>) -> Result<Library, String> {
 }
 
 #[tauri::command]
-fn delete_wallpaper(state: State<'_, AppState>, wallpaper_id: String) -> Result<Library, String> {
-    cache::delete_wallpaper(&state.db_path, &state.cache_dir, &wallpaper_id)?;
+fn delete_wallpaper(state: State<'_, AppState>, id: String) -> Result<Library, String> {
+    cache::delete_wallpaper(&state.db_path, &state.cache_dir, &id)?;
     cache::list_library(&state.db_path)
 }
 

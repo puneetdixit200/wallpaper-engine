@@ -380,7 +380,7 @@ export function AppStateProvider({ children }: AppStateProviderProps) {
     async (wallpaper: Wallpaper) => {
       const nextLibrary = await runWithStatus(
         `delete-${wallpaper.id}`,
-        () => invoke<Library>("delete_wallpaper", { wallpaperId: wallpaper.id }),
+        () => invoke<Library>("delete_wallpaper", { id: wallpaper.id }),
         "Wallpaper deleted.",
       );
       if (nextLibrary) {
