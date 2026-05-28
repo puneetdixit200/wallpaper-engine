@@ -732,15 +732,6 @@ mod config_tests {
     }
 
     #[test]
-    fn bundle_uses_app_binary_when_helper_bins_exist() {
-        let config: Value =
-            serde_json::from_str(include_str!("../tauri.conf.json")).expect("config is valid JSON");
-        let main_binary_name = config.pointer("/mainBinaryName").and_then(Value::as_str);
-
-        assert_eq!(main_binary_name, Some("wallpaper-engine"));
-    }
-
-    #[test]
     fn content_security_policy_is_restrictive_and_allows_wallpaper_images() {
         let config: Value =
             serde_json::from_str(include_str!("../tauri.conf.json")).expect("config is valid JSON");

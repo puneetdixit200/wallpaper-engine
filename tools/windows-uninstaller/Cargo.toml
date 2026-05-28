@@ -1,0 +1,8 @@
+[package]
+name = "wallpaper-engine-uninstaller"
+version = "0.1.0"
+edition = "2021"
+description = "Standalone Windows uninstaller for Wallpaper Engine"
+publish = false
+
+[dependencies]
