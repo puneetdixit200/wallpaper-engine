@@ -1,3 +1,4 @@
+#[cfg(any(test, target_os = "windows"))]
 const POWERSHELL_UNINSTALLER: &str = r#"
 $ErrorActionPreference = 'Stop'
 
