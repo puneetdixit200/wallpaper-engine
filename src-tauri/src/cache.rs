@@ -184,7 +184,7 @@ pub fn list_library(db_path: &Path) -> Result<Library, String> {
     })
 }
 
-pub fn clear_library(db_path: &Path) -> Result<(), String> {
+pub fn clear_library(db_path: &Path, cache_dir: &Path) -> Result<(), String> {
     init_database(db_path)?;
     let connection = Connection::open(db_path)
         .map_err(|error| format!("Could not open wallpaper database: {error}"))?;
@@ -205,6 +205,8 @@ pub fn clear_library(db_path: &Path) -> Result<(), String> {
                 .map_err(|error| format!("Could not delete wallpaper file: {error}"))?;
         }
     }
+
+    clear_cache_files(cache_dir)?;
 
     connection
         .execute("DELETE FROM wallpapers", [])
@@ -367,16 +369,21 @@ fn collect_cache_stats(path: &Path, stats: &mut CacheStats) -> Result<(), String
 }
 
 pub fn clear_cache(cache_dir: &Path, db_path: &Path) -> Result<(), String> {
-    if cache_dir.exists() {
-        fs::remove_dir_all(cache_dir).map_err(|error| format!("Could not clear cache: {error}"))?;
-    }
-    fs::create_dir_all(cache_dir).map_err(|error| format!("Could not recreate cache: {error}"))?;
+    clear_cache_files(cache_dir)?;
     init_database(db_path)?;
     let connection = Connection::open(db_path)
         .map_err(|error| format!("Could not open wallpaper database: {error}"))?;
     connection
         .execute("UPDATE wallpapers SET local_path = NULL", [])
         .map_err(|error| format!("Could not update cache metadata: {error}"))?;
+    Ok(())
+}
+
+fn clear_cache_files(cache_dir: &Path) -> Result<(), String> {
+    if cache_dir.exists() {
+        fs::remove_dir_all(cache_dir).map_err(|error| format!("Could not clear cache: {error}"))?;
+    }
+    fs::create_dir_all(cache_dir).map_err(|error| format!("Could not recreate cache: {error}"))?;
     Ok(())
 }
 
@@ -649,6 +656,7 @@ mod tests {
     #[test]
     fn clears_library_metadata_and_wallpaper_files() {
         let db_path = temp_path("clear-library", "sqlite3");
+        let cache_dir = temp_path("clear-library-cache-dir", "dir");
         let local_path = temp_path("clear-library-wallpaper", "jpg");
         std::fs::write(&local_path, b"wallpaper").expect("wallpaper file should exist");
         init_database(&db_path).expect("database should initialize");
@@ -657,7 +665,7 @@ mod tests {
         upsert_downloaded_wallpaper(&db_path, &sample_wallpaper(), &local_path)
             .expect("download should upsert");
 
-        clear_library(&db_path).expect("library should clear");
+        clear_library(&db_path, &cache_dir).expect("library should clear");
         let library = list_library(&db_path).expect("library should list");
 
         assert!(library.favorites.is_empty());
@@ -665,6 +673,35 @@ mod tests {
         assert!(!local_path.exists());
 
         let _ = std::fs::remove_file(db_path);
+        let _ = std::fs::remove_dir_all(cache_dir);
+    }
+
+    #[test]
+    fn clear_library_removes_entire_wallpaper_cache_directory() {
+        let db_path = temp_path("clear-library-cache", "sqlite3");
+        let cache_dir = temp_path("clear-library-cache-dir", "dir");
+        let full_dir = cache_dir.join("full");
+        let screen_dir = cache_dir.join("screen");
+        std::fs::create_dir_all(&full_dir).expect("full cache dir should exist");
+        std::fs::create_dir_all(&screen_dir).expect("screen cache dir should exist");
+        std::fs::write(full_dir.join("orphan.jpg"), b"orphan")
+            .expect("orphan download should exist");
+        std::fs::write(screen_dir.join("prepared.jpg"), b"prepared")
+            .expect("prepared wallpaper should exist");
+        init_database(&db_path).expect("database should initialize");
+
+        clear_library(&db_path, &cache_dir).expect("library should clear");
+
+        assert!(cache_dir.exists());
+        assert_eq!(
+            cache_stats(&cache_dir)
+                .expect("cache stats should load")
+                .files,
+            0
+        );
+
+        let _ = std::fs::remove_file(db_path);
+        let _ = std::fs::remove_dir_all(cache_dir);
     }
 
     #[test]

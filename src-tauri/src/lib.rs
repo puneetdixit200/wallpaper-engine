@@ -165,7 +165,7 @@ fn clear_cache(state: State<'_, AppState>) -> Result<CacheStats, String> {
 
 #[tauri::command]
 fn clear_library(state: State<'_, AppState>) -> Result<Library, String> {
-    cache::clear_library(&state.db_path)?;
+    cache::clear_library(&state.db_path, &state.cache_dir)?;
     cache::list_library(&state.db_path)
 }
 
