@@ -11,6 +11,7 @@ The same files are also committed under `installers/` for source checkouts.
 | --- | --- | --- |
 | Windows setup EXE | [Download EXE](https://raw.githubusercontent.com/puneetdixit200/wallpaper-engine/main/installers/windows/Wallpaper-Engine_0.1.0_x64-setup.exe) | Standard Windows install |
 | Windows MSI | [Download MSI](https://raw.githubusercontent.com/puneetdixit200/wallpaper-engine/main/installers/windows/Wallpaper-Engine_0.1.0_x64_en-US.msi) | Managed/manual MSI install |
+| Windows uninstaller EXE | [Download Uninstaller](https://raw.githubusercontent.com/puneetdixit200/wallpaper-engine/main/installers/windows/Wallpaper-Engine_0.1.0_x64-uninstaller.exe) | Remove the app, background process, startup entry, and app cache |
 | macOS Apple Silicon | [Download DMG](https://raw.githubusercontent.com/puneetdixit200/wallpaper-engine/main/installers/macos/Wallpaper-Engine_0.1.0_aarch64.dmg) | M1/M2/M3/M4 Macs |
 | Linux AppImage | [Download AppImage](https://raw.githubusercontent.com/puneetdixit200/wallpaper-engine/main/installers/linux/Wallpaper-Engine_0.1.0_amd64.AppImage) | Portable Linux run without package install |
 | Linux DEB | [Download DEB](https://raw.githubusercontent.com/puneetdixit200/wallpaper-engine/main/installers/linux/Wallpaper-Engine_0.1.0_amd64.deb) | Debian, Ubuntu, Linux Mint |
@@ -38,6 +39,17 @@ For MSI-based installs:
 ```powershell
 msiexec /i .\installers\windows\Wallpaper-Engine_0.1.0_x64_en-US.msi
 ```
+
+## Windows Uninstall
+
+The setup EXE and MSI also register Wallpaper Engine in Windows Installed Apps.
+For a direct cleanup, run:
+
+```powershell
+.\installers\windows\Wallpaper-Engine_0.1.0_x64-uninstaller.exe
+```
+
+The standalone uninstaller stops the app process, runs the registered Windows uninstaller when present, removes startup entries, and deletes app-specific data/cache folders.
 
 ## macOS Install
 
