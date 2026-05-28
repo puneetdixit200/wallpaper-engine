@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { Database, Heart, Home, Image, Search, Settings } from "lucide-react";
+import { Heart, Home, Image, Search, Settings } from "lucide-react";
 import { AppStateProvider, useAppState } from "./appState";
 import { ErrorBoundary } from "./components/ErrorBoundary";
 import { HomePage } from "./pages/Home";
@@ -85,8 +85,8 @@ function AppShell() {
     >
       <aside className="sidebar">
         <div className="brand">
-          <div className="brand-mark">
-            <Database size={18} aria-hidden="true" />
+          <div className="brand-mark" aria-hidden="true">
+            <img src="/icon.svg" alt="" />
           </div>
           <div>
             <h1>Wallpaper Engine</h1>

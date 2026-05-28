@@ -1,0 +1,466 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Wallpaper Engine - Automatic Desktop Wallpaper Changer for Windows, macOS, and Linux</title>
+    <meta
+      name="description"
+      content="Download Wallpaper Engine, an open-source desktop wallpaper changer for Windows, macOS, and Linux. Search Pexels, Unsplash, Pixabay, Wallhaven, and DeviantArt, save favorites, and automatically rotate wallpapers in the background."
+    />
+    <meta
+      name="keywords"
+      content="wallpaper engine, wallpaper changer, automatic wallpaper changer, desktop wallpaper app, Windows wallpaper changer, macOS wallpaper app, Linux wallpaper app, Tauri wallpaper manager, Wallhaven wallpaper app, Unsplash wallpaper downloader"
+    />
+    <meta name="author" content="Puneet Dixit" />
+    <meta name="robots" content="index, follow" />
+    <meta name="theme-color" content="#000000" />
+    <link rel="canonical" href="https://puneetdixit200.github.io/wallpaper-engine/" />
+    <link rel="icon" href="./icon.svg" type="image/svg+xml" />
+    <link rel="apple-touch-icon" href="./icon.png" />
+    <meta property="og:type" content="website" />
+    <meta property="og:site_name" content="Wallpaper Engine" />
+    <meta property="og:title" content="Wallpaper Engine - Automatic Desktop Wallpaper Changer" />
+    <meta
+      property="og:description"
+      content="A cross-platform wallpaper manager with provider search, high-resolution local caching, favorites, tray background mode, startup support, and automatic wallpaper rotation."
+    />
+    <meta property="og:url" content="https://puneetdixit200.github.io/wallpaper-engine/" />
+    <meta property="og:image" content="https://puneetdixit200.github.io/wallpaper-engine/icon.png" />
+    <meta name="twitter:card" content="summary" />
+    <meta name="twitter:title" content="Wallpaper Engine - Automatic Desktop Wallpaper Changer" />
+    <meta
+      name="twitter:description"
+      content="Download a Tauri desktop wallpaper changer for Windows, macOS, and Linux with background auto-change and local wallpaper library support."
+    />
+    <meta name="twitter:image" content="https://puneetdixit200.github.io/wallpaper-engine/icon.png" />
+    <script type="application/ld+json">
+      {
+        "@context": "https://schema.org",
+        "@type": "SoftwareApplication",
+        "name": "Wallpaper Engine",
+        "applicationCategory": "MultimediaApplication",
+        "operatingSystem": "Windows, macOS, Linux",
+        "softwareVersion": "0.1.0",
+        "description": "Open-source desktop wallpaper changer for provider search, local wallpaper management, favorites, background auto-change, and startup support.",
+        "image": "https://puneetdixit200.github.io/wallpaper-engine/icon.png",
+        "downloadUrl": "https://github.com/puneetdixit200/wallpaper-engine#one-click-downloads",
+        "codeRepository": "https://github.com/puneetdixit200/wallpaper-engine",
+        "offers": {
+          "@type": "Offer",
+          "price": "0",
+          "priceCurrency": "USD"
+        }
+      }
+    </script>
+    <style>
+      :root {
+        color-scheme: dark;
+        --bg: #090b0a;
+        --surface: #111614;
+        --surface-soft: #18201d;
+        --text: #f6f7f2;
+        --muted: #b8c4bd;
+        --line: rgba(255, 255, 255, 0.13);
+        --accent: #49c384;
+        --accent-dark: #133728;
+        --warn: #f4c76b;
+        font-family:
+          Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont,
+          "Segoe UI", sans-serif;
+        background: var(--bg);
+        color: var(--text);
+      }
+
+      * {
+        box-sizing: border-box;
+      }
+
+      body {
+        margin: 0;
+        min-width: 320px;
+        background: var(--bg);
+        color: var(--text);
+      }
+
+      a {
+        color: inherit;
+      }
+
+      .shell {
+        min-height: 100vh;
+      }
+
+      .hero {
+        position: relative;
+        overflow: hidden;
+        border-bottom: 1px solid var(--line);
+        background:
+          linear-gradient(180deg, rgba(0, 0, 0, 0.28), rgba(9, 11, 10, 0.95)),
+          #000000;
+      }
+
+      .hero::after {
+        position: absolute;
+        inset: auto -8vw -18vw auto;
+        width: min(58vw, 560px);
+        aspect-ratio: 1;
+        background: url("./icon.svg") center / contain no-repeat;
+        content: "";
+        opacity: 0.13;
+        pointer-events: none;
+      }
+
+      .nav,
+      .section {
+        width: min(1120px, calc(100% - 32px));
+        margin: 0 auto;
+      }
+
+      .nav {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 18px;
+        padding: 18px 0;
+      }
+
+      .brand {
+        display: flex;
+        align-items: center;
+        gap: 12px;
+        min-width: 0;
+        font-weight: 800;
+      }
+
+      .brand img {
+        width: 42px;
+        height: 42px;
+        border: 1px solid var(--line);
+        border-radius: 8px;
+      }
+
+      .brand span {
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+
+      .nav-links {
+        display: flex;
+        flex-wrap: wrap;
+        justify-content: flex-end;
+        gap: 10px;
+        font-size: 0.95rem;
+      }
+
+      .nav-links a,
+      .button {
+        min-height: 40px;
+        border: 1px solid var(--line);
+        border-radius: 8px;
+        padding: 10px 13px;
+        text-decoration: none;
+      }
+
+      .nav-links a:hover,
+      .button:hover {
+        border-color: rgba(73, 195, 132, 0.7);
+      }
+
+      .hero-content {
+        position: relative;
+        z-index: 1;
+        width: min(1120px, calc(100% - 32px));
+        margin: 0 auto;
+        padding: clamp(56px, 10vw, 118px) 0 clamp(52px, 8vw, 88px);
+      }
+
+      .eyebrow {
+        display: inline-flex;
+        margin-bottom: 16px;
+        color: var(--accent);
+        font-size: 0.84rem;
+        font-weight: 800;
+        letter-spacing: 0;
+        text-transform: uppercase;
+      }
+
+      h1,
+      h2,
+      h3,
+      p {
+        margin: 0;
+      }
+
+      h1 {
+        max-width: 850px;
+        font-size: clamp(2.4rem, 7vw, 5.8rem);
+        line-height: 0.96;
+        letter-spacing: 0;
+      }
+
+      .hero-copy {
+        max-width: 720px;
+        margin-top: 20px;
+        color: var(--muted);
+        font-size: clamp(1rem, 2.4vw, 1.28rem);
+        line-height: 1.6;
+      }
+
+      .hero-actions {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 12px;
+        margin-top: 28px;
+      }
+
+      .button {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        font-weight: 800;
+      }
+
+      .button.primary {
+        border-color: var(--accent);
+        color: #06110d;
+        background: var(--accent);
+      }
+
+      .section {
+        padding: 56px 0;
+      }
+
+      .section + .section {
+        border-top: 1px solid var(--line);
+      }
+
+      .section-header {
+        display: grid;
+        gap: 10px;
+        max-width: 760px;
+        margin-bottom: 24px;
+      }
+
+      .section-header h2 {
+        font-size: clamp(1.8rem, 4vw, 3rem);
+        line-height: 1.05;
+        letter-spacing: 0;
+      }
+
+      .section-header p,
+      .faq p {
+        color: var(--muted);
+        line-height: 1.65;
+      }
+
+      .grid {
+        display: grid;
+        grid-template-columns: repeat(3, minmax(0, 1fr));
+        gap: 14px;
+      }
+
+      .card {
+        min-width: 0;
+        border: 1px solid var(--line);
+        border-radius: 8px;
+        padding: 18px;
+        background: var(--surface);
+      }
+
+      .card h3 {
+        margin-bottom: 8px;
+        font-size: 1.05rem;
+      }
+
+      .card p,
+      .card li {
+        color: var(--muted);
+        font-size: 0.95rem;
+        line-height: 1.55;
+      }
+
+      .downloads {
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+      }
+
+      .download-card {
+        display: grid;
+        gap: 12px;
+      }
+
+      .download-card a {
+        justify-self: start;
+      }
+
+      .feature-list {
+        margin: 0;
+        padding-left: 1.1rem;
+      }
+
+      .faq {
+        display: grid;
+        gap: 14px;
+      }
+
+      footer {
+        border-top: 1px solid var(--line);
+        padding: 24px 16px;
+        color: var(--muted);
+        text-align: center;
+      }
+
+      @media (max-width: 760px) {
+        .nav {
+          align-items: flex-start;
+          flex-direction: column;
+        }
+
+        .nav-links {
+          justify-content: flex-start;
+        }
+
+        .grid,
+        .downloads {
+          grid-template-columns: 1fr;
+        }
+
+        .hero::after {
+          width: 420px;
+          inset: auto -160px -120px auto;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <div class="shell">
+      <header class="hero">
+        <nav class="nav" aria-label="Primary navigation">
+          <a class="brand" href="https://github.com/puneetdixit200/wallpaper-engine">
+            <img src="./icon.svg" alt="" width="42" height="42" />
+            <span>Wallpaper Engine</span>
+          </a>
+          <div class="nav-links">
+            <a href="#downloads">Downloads</a>
+            <a href="#features">Features</a>
+            <a href="https://github.com/puneetdixit200/wallpaper-engine">GitHub</a>
+          </div>
+        </nav>
+
+        <section class="hero-content">
+          <span class="eyebrow">Open-source desktop wallpaper app</span>
+          <h1>Wallpaper Engine</h1>
+          <p class="hero-copy">
+            Search wallpaper providers, save a local library, mark favorites, and
+            automatically rotate high-resolution desktop wallpapers from the
+            background tray on Windows, macOS, and Linux.
+          </p>
+          <div class="hero-actions">
+            <a class="button primary" href="#downloads">Download installers</a>
+            <a class="button" href="https://github.com/puneetdixit200/wallpaper-engine">View source</a>
+          </div>
+        </section>
+      </header>
+
+      <main>
+        <section class="section" id="downloads">
+          <div class="section-header">
+            <h2>Download Wallpaper Engine</h2>
+            <p>
+              Install the packaged desktop app directly from the repository.
+              Checksums are available for verifying every committed installer.
+            </p>
+          </div>
+          <div class="grid downloads">
+            <article class="card download-card">
+              <h3>Windows</h3>
+              <p>Use the setup EXE for a standard install or MSI for managed installs.</p>
+              <a class="button primary" href="https://raw.githubusercontent.com/puneetdixit200/wallpaper-engine/main/installers/windows/Wallpaper-Engine_0.1.0_x64-setup.exe">Download EXE</a>
+              <a class="button" href="https://raw.githubusercontent.com/puneetdixit200/wallpaper-engine/main/installers/windows/Wallpaper-Engine_0.1.0_x64_en-US.msi">Download MSI</a>
+            </article>
+            <article class="card download-card">
+              <h3>macOS Apple Silicon</h3>
+              <p>Download the DMG for M1, M2, M3, and M4 Macs.</p>
+              <a class="button primary" href="https://raw.githubusercontent.com/puneetdixit200/wallpaper-engine/main/installers/macos/Wallpaper-Engine_0.1.0_aarch64.dmg">Download DMG</a>
+            </article>
+            <article class="card download-card">
+              <h3>Linux</h3>
+              <p>Use AppImage for portable runs, DEB for Debian/Ubuntu, or RPM for Fedora-style systems.</p>
+              <a class="button primary" href="https://raw.githubusercontent.com/puneetdixit200/wallpaper-engine/main/installers/linux/Wallpaper-Engine_0.1.0_amd64.AppImage">Download AppImage</a>
+              <a class="button" href="https://raw.githubusercontent.com/puneetdixit200/wallpaper-engine/main/installers/linux/Wallpaper-Engine_0.1.0_amd64.deb">Download DEB</a>
+              <a class="button" href="https://raw.githubusercontent.com/puneetdixit200/wallpaper-engine/main/installers/linux/Wallpaper-Engine-0.1.0-1.x86_64.rpm">Download RPM</a>
+            </article>
+            <article class="card download-card">
+              <h3>Verify or uninstall</h3>
+              <p>Use SHA256SUMS for integrity checks. Windows also has a standalone cleanup uninstaller.</p>
+              <a class="button primary" href="https://raw.githubusercontent.com/puneetdixit200/wallpaper-engine/main/installers/SHA256SUMS">Download SHA256SUMS</a>
+              <a class="button" href="https://raw.githubusercontent.com/puneetdixit200/wallpaper-engine/main/installers/windows/Wallpaper-Engine_0.1.0_x64-uninstaller.exe">Download Windows uninstaller</a>
+            </article>
+          </div>
+        </section>
+
+        <section class="section" id="features">
+          <div class="section-header">
+            <h2>Desktop wallpaper control without a subscription</h2>
+            <p>
+              Wallpaper Engine is built with Tauri for a small desktop footprint
+              and keeps downloads, favorites, and settings local to your machine.
+            </p>
+          </div>
+          <div class="grid">
+            <article class="card">
+              <h3>Provider search</h3>
+              <p>Search Pexels, Unsplash, Pixabay, Wallhaven, DeviantArt, and fallback no-key sources from one app.</p>
+            </article>
+            <article class="card">
+              <h3>Background rotation</h3>
+              <p>Enable background mode, close the window, and keep wallpaper updates running from the tray and startup entry.</p>
+            </article>
+            <article class="card">
+              <h3>High-resolution cache</h3>
+              <p>Save original image files locally so landscape wallpapers stay sharp before they are applied to the desktop.</p>
+            </article>
+            <article class="card">
+              <h3>Library management</h3>
+              <p>Favorite wallpapers, remove individual downloads, clear the whole local library, and refresh the UI immediately.</p>
+            </article>
+            <article class="card">
+              <h3>Cross-platform installers</h3>
+              <p>Use committed Windows, macOS, and Linux installers from the repo, with reproducible GitHub Actions builds.</p>
+            </article>
+            <article class="card">
+              <h3>Layout options</h3>
+              <p>Apply wallpapers with Fill, Fit, Stretch, Tile, Center, or Span where the operating system supports it.</p>
+            </article>
+          </div>
+        </section>
+
+        <section class="section" id="faq">
+          <div class="section-header">
+            <h2>FAQ</h2>
+          </div>
+          <div class="faq">
+            <article class="card">
+              <h3>Does Wallpaper Engine work after closing the window?</h3>
+              <p>Yes. When background mode is enabled, the app keeps running from the tray and continues changing wallpapers until you quit it from the tray or terminate the process.</p>
+            </article>
+            <article class="card">
+              <h3>Where are wallpapers stored?</h3>
+              <p>Downloaded wallpapers are stored in the app cache on your local machine and can be deleted from the Library screen or cleared all at once.</p>
+            </article>
+            <article class="card">
+              <h3>Do I need API keys?</h3>
+              <p>Some providers work best with API keys. Wallhaven SFW search and fallback placeholders can still work without provider credentials.</p>
+            </article>
+          </div>
+        </section>
+      </main>
+
+      <footer>
+        Wallpaper Engine is open source on GitHub at
+        <a href="https://github.com/puneetdixit200/wallpaper-engine">puneetdixit200/wallpaper-engine</a>.
+      </footer>
+    </div>
+  </body>
+</html>

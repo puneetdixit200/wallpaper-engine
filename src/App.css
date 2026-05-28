@@ -136,8 +136,15 @@ button {
   width: 38px;
   height: 38px;
   border-radius: 8px;
-  color: var(--sidebar-bg);
-  background: #bce4c5;
+  overflow: hidden;
+  background: #000000;
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.16);
+}
+
+.brand-mark img {
+  display: block;
+  width: 100%;
+  height: 100%;
 }
 
 .brand h1,
