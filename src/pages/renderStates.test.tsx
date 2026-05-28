@@ -90,6 +90,21 @@ describe("page render states", () => {
     expect(html).toContain("No downloads yet");
   });
 
+  it("keeps clear library available when cached downloads exist without visible library items", () => {
+    const html = renderWithState(
+      <LibraryPage />,
+      appValue({
+        cacheStats: {
+          bytes: 1024,
+          files: 2,
+        },
+      }),
+    );
+
+    expect(html).toContain("Clear library");
+    expect(html).not.toMatch(/<button[^>]*disabled[^>]*>Clear library/);
+  });
+
   it("marks saved wallpapers with a filled favorite action", () => {
     const saved = wallpaper("saved", true);
     const html = renderWithState(

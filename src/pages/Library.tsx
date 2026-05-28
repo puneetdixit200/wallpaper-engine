@@ -4,9 +4,11 @@ import { EmptyState } from "../components/EmptyState";
 import { WallCard } from "../components/WallCard";
 
 export function LibraryPage() {
-  const { busy, library, actions } = useAppState();
+  const { busy, cacheStats, library, actions } = useAppState();
   const hasLibraryItems =
     library.favorites.length > 0 || library.downloaded.length > 0;
+  const hasCachedDownloads = cacheStats.files > 0;
+  const canClearLibrary = hasLibraryItems || hasCachedDownloads;
 
   return (
     <div className="view-stack">
@@ -17,11 +19,11 @@ export function LibraryPage() {
         </div>
         <button
           className="secondary-button"
-          disabled={!hasLibraryItems || busy === "clear-library"}
+          disabled={!canClearLibrary || busy === "clear-library"}
           onClick={() =>
             void runConfirmed(
               (message) => window.confirm(message),
-              "Clear all saved and downloaded wallpaper metadata?",
+              "Clear all saved, downloaded, and cached wallpaper files?",
               actions.clearLibrary,
             )
           }
