@@ -9,7 +9,8 @@ flowchart LR
   User[User] --> React[React UI]
   React -->|Tauri invoke| Commands[Rust command layer]
   React --> Clerk[Clerk auth]
-  Browser[System browser] -->|wallpaper-engine://auth/callback| React
+  Browser[System browser] -->|HTTPS callback bridge| Bridge[GitHub Pages bridge]
+  Bridge -->|wallpaper-engine://auth/callback| React
   Commands --> Settings[settings.json]
   Commands --> API[Provider clients]
   Commands --> Supabase[Supabase REST sync]
@@ -229,7 +230,8 @@ Runtime effects:
 
 - The Tauri deep-link plugin registers the `wallpaper-engine` scheme from `tauri.conf.json`.
 - The single-instance plugin keeps callback launches routed to the running process on desktop builds.
-- `SyncPage` creates a Clerk Google OAuth sign-in attempt inside the WebView, opens the returned verification URL in the system browser, and uses `wallpaper-engine://auth/callback` as the completion URL.
+- `SyncPage` creates a Clerk Google OAuth sign-in attempt inside the WebView, opens the returned verification URL in the system browser, and uses the GitHub Pages HTTPS bridge as Clerk's OAuth callback URL.
+- `docs/auth/callback/index.html` receives Clerk's HTTPS callback in the browser and forwards the full query/hash to `wallpaper-engine://auth/callback`.
 - `ClerkDeepLinkBridge` listens through `@tauri-apps/plugin-deep-link`, rewrites the callback into the WebView history as `/auth/callback`, and calls `clerk.handleRedirectCallback`.
 - After completion, normal Clerk React hooks expose `userId` and `getToken`; sync commands use those values for Supabase RLS.
 

@@ -151,7 +151,7 @@ The app pushes one JSON snapshot to your own Supabase table and pulls it on anot
 Recommended setup:
 
 1. Create a Clerk app, enable Google as a social connection, and copy the Clerk publishable key.
-2. In Clerk, add `wallpaper-engine://auth/callback` as an allowed native redirect URL for browser-based OAuth.
+2. In Clerk, add `https://puneetdixit200.github.io/wallpaper-engine/auth/callback/` as an allowed redirect URL for browser-based OAuth.
 3. In Supabase, enable Clerk as a third-party auth provider for the project.
 4. Run this SQL in the Supabase SQL editor.
 5. In the app Sync tab, paste the Supabase project URL, Supabase anon key, and Clerk publishable key, then enable Clerk login and sign in from the browser.
@@ -187,7 +187,7 @@ with check ((select auth.jwt() ->> 'sub') = id);
 
 For manual Sync ID mode, keep the row ID private and use your own RLS policy choice. Clerk mode is safer because Supabase verifies the Clerk session token and each user can only read or write the row whose `id` matches their Clerk `sub` claim.
 
-The desktop browser sign-in flow uses Tauri deep links. The app opens Clerk OAuth in the system browser, receives `wallpaper-engine://auth/callback`, completes the Clerk session inside the desktop app, and then uses the signed-in user ID for Supabase sync.
+The desktop browser sign-in flow uses an HTTPS callback bridge plus Tauri deep links. Clerk returns to `https://puneetdixit200.github.io/wallpaper-engine/auth/callback/`, that page opens `wallpaper-engine://auth/callback`, and the app completes the Clerk session inside the desktop app.
 
 ## Development
 

@@ -23,7 +23,7 @@ import { useAppState } from "../appState";
 import {
   ClerkAuthEventDetail,
   clerkErrorMessage,
-  desktopAuthCallbackUrl,
+  desktopAuthBridgeUrl,
   externalClerkVerificationUrl,
 } from "../clerkDesktopAuth";
 import {
@@ -488,8 +488,8 @@ function ClerkRuntimePanel() {
     try {
       const signInAttempt = await signIn.create({
         strategy: "oauth_google",
-        redirectUrl: desktopAuthCallbackUrl,
-        actionCompleteRedirectUrl: desktopAuthCallbackUrl,
+        redirectUrl: desktopAuthBridgeUrl,
+        actionCompleteRedirectUrl: desktopAuthBridgeUrl,
       });
 
       if (signInAttempt.status === "complete" && signInAttempt.createdSessionId) {

@@ -1,5 +1,7 @@
 export const desktopAuthScheme = "wallpaper-engine";
 export const desktopAuthCallbackUrl = "wallpaper-engine://auth/callback";
+export const desktopAuthBridgeUrl =
+  "https://puneetdixit200.github.io/wallpaper-engine/auth/callback/";
 
 export type ClerkAuthEventState = "success" | "error" | "checking";
 

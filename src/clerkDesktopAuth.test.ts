@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  desktopAuthBridgeUrl,
   desktopAuthCallbackUrl,
   desktopAuthCallbackUrlToLocalPath,
   externalClerkVerificationUrl,
@@ -23,6 +24,11 @@ describe("clerk desktop auth helpers", () => {
     expect(isDesktopAuthCallbackUrl("https://example.com/auth/callback")).toBe(
       false,
     );
+  });
+
+  it("uses an HTTPS bridge URL for Clerk OAuth", () => {
+    expect(new URL(desktopAuthBridgeUrl).protocol).toBe("https:");
+    expect(desktopAuthBridgeUrl).toContain("/auth/callback/");
   });
 
   it("extracts the Clerk OAuth verification URL", () => {
