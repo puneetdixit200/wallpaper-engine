@@ -1,10 +1,22 @@
-import { useEffect, useState } from "react";
-import { Heart, Home, Image, Search, Settings } from "lucide-react";
+import { useCallback, useEffect, useState } from "react";
+import { ClerkProvider } from "@clerk/clerk-react";
+import {
+  Cloud,
+  Heart,
+  Home,
+  Image,
+  Search,
+  Settings,
+  SlidersHorizontal,
+} from "lucide-react";
 import { AppStateProvider, useAppState } from "./appState";
+import { ClerkDeepLinkBridge } from "./ClerkDeepLinkBridge";
 import { ErrorBoundary } from "./components/ErrorBoundary";
 import { HomePage } from "./pages/Home";
 import { SearchPage } from "./pages/Search";
 import { LibraryPage } from "./pages/Library";
+import { SyncPage } from "./pages/Sync";
+import { ControlsPage } from "./pages/Controls";
 import { SettingsPage } from "./pages/Settings";
 import {
   backgroundPermissionMessage,
@@ -12,6 +24,7 @@ import {
   withBackgroundPermission,
 } from "./settingsFlow";
 import { resolveThemePreference } from "./themePreference";
+import { desktopAuthScheme } from "./clerkDesktopAuth";
 import { ViewName } from "./types";
 import { resetDocumentScroll } from "./viewScroll";
 import "./App.css";
@@ -20,6 +33,8 @@ const navItems: Array<{ id: ViewName; label: string; icon: typeof Home }> = [
   { id: "home", label: "Home", icon: Home },
   { id: "search", label: "Search", icon: Search },
   { id: "library", label: "Library", icon: Image },
+  { id: "sync", label: "Sync", icon: Cloud },
+  { id: "controls", label: "Controls", icon: SlidersHorizontal },
   { id: "settings", label: "Settings", icon: Settings },
 ];
 
@@ -61,6 +76,12 @@ function AppShell() {
   const shouldShowBackgroundPrompt =
     !backgroundPromptDismissed &&
     shouldAskForBackgroundPermission(settings, settings);
+  const clerkPublishableKey = settings.clerkAuth.enabled
+    ? settings.clerkAuth.publishableKey.trim()
+    : "";
+  const showSyncAfterAuth = useCallback(() => {
+    actions.setActiveView("sync");
+  }, [actions]);
 
   useEffect(() => {
     resetDocumentScroll();
@@ -73,11 +94,15 @@ function AppShell() {
       <SearchPage />
     ) : activeView === "library" ? (
       <LibraryPage />
+    ) : activeView === "sync" ? (
+      <SyncPage />
+    ) : activeView === "controls" ? (
+      <ControlsPage />
     ) : (
       <SettingsPage />
     );
 
-  return (
+  const shell = (
     <main
       className="app-shell"
       data-theme={settings.theme}
@@ -138,6 +163,18 @@ function AppShell() {
         </div>
       </section>
     </main>
+  );
+
+  return clerkPublishableKey ? (
+    <ClerkProvider
+      allowedRedirectProtocols={[desktopAuthScheme]}
+      publishableKey={clerkPublishableKey}
+    >
+      <ClerkDeepLinkBridge onAuthenticated={showSyncAfterAuth} />
+      {shell}
+    </ClerkProvider>
+  ) : (
+    shell
   );
 }
 

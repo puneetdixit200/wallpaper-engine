@@ -49,6 +49,7 @@ On Linux, `sha256sum -c installers/SHA256SUMS` also works.
 
 - Search Pexels, Unsplash, Pixabay, Wallhaven, DeviantArt, and fallback no-key providers.
 - Save provider credentials from the Settings screen.
+- Sync settings, provider keys, favorites, and playlists through your own Supabase project, with optional Clerk login.
 - Enable Wallhaven sketchy/NSFW results with a Wallhaven API key.
 - Filter provider results to desktop-sized landscape wallpapers.
 - Save favorites and downloaded wallpapers in a local SQLite-backed cache.
@@ -59,6 +60,8 @@ On Linux, `sha256sum -c installers/SHA256SUMS` also works.
 - Delete wallpapers one by one from the Library screen.
 - Keep the left sidebar static on desktop while content scrolls.
 - Use an adaptive UI that responds to app window resizing.
+- Keep quality guard and global hotkey controls in a dedicated Controls tab.
+- Show Supabase and Clerk connection state with exact sync errors in the Sync tab.
 - Ask before enabling background mode.
 - Keep the saved auto-change interval running from the tray after the window is closed.
 - Launch hidden on startup when background mode is enabled.
@@ -139,6 +142,53 @@ Linux wallpaper application is ready for common desktop environments. GNOME-comp
 
 ArtStation does not expose a stable public search API. The app shows it as a source with a clear error instead of scraping unofficial endpoints.
 
+## Supabase Sync
+
+The Sync page stores the Supabase project URL and anon key locally. The recommended mode also stores a Clerk publishable key, signs you in with Clerk, and uses the Clerk user ID as the cloud row ID. Manual Sync ID mode is still available for a private personal project.
+
+The app pushes one JSON snapshot to your own Supabase table and pulls it on another device. Wallpaper image files are not uploaded; synced wallpapers keep their source URLs and metadata.
+
+Recommended setup:
+
+1. Create a Clerk app, enable Google as a social connection, and copy the Clerk publishable key.
+2. In Clerk, add `wallpaper-engine://auth/callback` as an allowed native redirect URL for browser-based OAuth.
+3. In Supabase, enable Clerk as a third-party auth provider for the project.
+4. Run this SQL in the Supabase SQL editor.
+5. In the app Sync tab, paste the Supabase project URL, Supabase anon key, and Clerk publishable key, then enable Clerk login and sign in from the browser.
+
+```sql
+create table if not exists public.wallpaper_engine_sync (
+  id text primary key,
+  payload jsonb not null,
+  updated_at text not null
+);
+
+alter table public.wallpaper_engine_sync enable row level security;
+
+create policy "Wallpaper Engine read own sync row"
+on public.wallpaper_engine_sync
+for select
+to authenticated
+using ((select auth.jwt() ->> 'sub') = id);
+
+create policy "Wallpaper Engine insert own sync row"
+on public.wallpaper_engine_sync
+for insert
+to authenticated
+with check ((select auth.jwt() ->> 'sub') = id);
+
+create policy "Wallpaper Engine update own sync row"
+on public.wallpaper_engine_sync
+for update
+to authenticated
+using ((select auth.jwt() ->> 'sub') = id)
+with check ((select auth.jwt() ->> 'sub') = id);
+```
+
+For manual Sync ID mode, keep the row ID private and use your own RLS policy choice. Clerk mode is safer because Supabase verifies the Clerk session token and each user can only read or write the row whose `id` matches their Clerk `sub` claim.
+
+The desktop browser sign-in flow uses Tauri deep links. The app opens Clerk OAuth in the system browser, receives `wallpaper-engine://auth/callback`, completes the Clerk session inside the desktop app, and then uses the signed-in user ID for Supabase sync.
+
 ## Development
 
 ```bash
@@ -154,4 +204,3 @@ cargo test --manifest-path src-tauri/Cargo.toml
 cargo test --manifest-path tools/windows-uninstaller/Cargo.toml
 npm run tauri build
 ```
-

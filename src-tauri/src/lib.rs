@@ -3,6 +3,7 @@ pub mod cache;
 pub mod models;
 pub mod quality;
 pub mod settings;
+pub mod sync;
 pub mod wallpaper;
 
 use models::{ApiSource, CacheStats, ImportResult, Library, Wallpaper, WallpaperQualityReport};
@@ -349,6 +350,76 @@ async fn import_backup(
     cache::restore_wallpaper_metadata(&state.db_path, &wallpapers)?;
     cache::restore_playlists(&state.db_path, &payload.library.playlists)?;
     cache::list_library(&state.db_path)
+}
+
+#[tauri::command]
+async fn test_supabase_sync(
+    state: State<'_, AppState>,
+    auth_context: Option<sync::SyncAuthContext>,
+) -> Result<sync::SupabaseSyncStatus, String> {
+    let settings = load_settings_from_path(&state.settings_path)
+        .map_err(|error| format!("Could not load settings: {error}"))?;
+    sync::test_supabase_connection(
+        &state.client,
+        &settings.supabase_sync,
+        auth_context.as_ref(),
+    )
+    .await
+}
+
+#[tauri::command]
+async fn push_supabase_sync(
+    state: State<'_, AppState>,
+    auth_context: Option<sync::SyncAuthContext>,
+) -> Result<sync::SupabaseSyncStatus, String> {
+    let settings = load_settings_from_path(&state.settings_path)
+        .map_err(|error| format!("Could not load settings: {error}"))?;
+    let library = cache::list_library(&state.db_path)?;
+    let payload = sync::build_sync_payload(&settings, &library);
+    sync::push_supabase_sync(
+        &state.client,
+        &settings.supabase_sync,
+        auth_context.as_ref(),
+        &payload,
+    )
+    .await
+}
+
+#[tauri::command]
+async fn pull_supabase_sync(
+    app_handle: tauri::AppHandle,
+    state: State<'_, AppState>,
+    auth_context: Option<sync::SyncAuthContext>,
+) -> Result<sync::SupabaseSyncApplyResult, String> {
+    let current_settings = load_settings_from_path(&state.settings_path)
+        .map_err(|error| format!("Could not load settings: {error}"))?;
+    let (payload, status) = sync::pull_supabase_sync(
+        &state.client,
+        &current_settings.supabase_sync,
+        auth_context.as_ref(),
+    )
+    .await?;
+    let mut settings = payload.settings.sanitized();
+    settings.supabase_sync = current_settings.supabase_sync;
+    sync_autostart(&app_handle, &settings)?;
+    save_settings_to_path(&state.settings_path, &settings)
+        .map_err(|error| format!("Could not save pulled settings: {error}"))?;
+    restart_scheduler(state.inner(), settings.auto_change_minutes).await?;
+    if let Err(error) = configure_global_hotkeys(&app_handle, &settings) {
+        eprintln!("Could not update global hotkeys after Supabase pull: {error}");
+    }
+
+    let library = sync::portable_library_for_current_machine(payload.library);
+    let wallpapers = sync::collect_library_wallpapers(&library);
+    cache::restore_wallpaper_metadata(&state.db_path, &wallpapers)?;
+    cache::restore_playlists(&state.db_path, &library.playlists)?;
+    let library = cache::list_library(&state.db_path)?;
+
+    Ok(sync::SupabaseSyncApplyResult {
+        status,
+        settings,
+        library,
+    })
 }
 
 #[tauri::command]
@@ -990,7 +1061,19 @@ pub fn run() {
         return;
     }
 
-    let app = tauri::Builder::default()
+    let mut builder = tauri::Builder::default();
+
+    #[cfg(desktop)]
+    {
+        builder = builder.plugin(tauri_plugin_single_instance::init(
+            |app_handle, _argv, _cwd| {
+                show_main_window(app_handle);
+            },
+        ));
+    }
+
+    let app = builder
+        .plugin(tauri_plugin_deep_link::init())
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_autostart::init(
@@ -1004,6 +1087,14 @@ pub fn run() {
             fs::create_dir_all(&config_dir)?;
             fs::create_dir_all(&data_dir)?;
             fs::create_dir_all(&cache_dir)?;
+
+            #[cfg(any(target_os = "linux", all(debug_assertions, windows)))]
+            {
+                use tauri_plugin_deep_link::DeepLinkExt;
+                if let Err(error) = app.deep_link().register_all() {
+                    eprintln!("Could not register deep links: {error}");
+                }
+            }
 
             let settings_path = settings_path(&config_dir);
             let settings = load_settings_from_path(&settings_path).unwrap_or_default();
@@ -1078,6 +1169,9 @@ pub fn run() {
             run_auto_cleanup,
             export_backup,
             import_backup,
+            test_supabase_sync,
+            push_supabase_sync,
+            pull_supabase_sync,
             set_favorite,
             apply_random_wallpaper,
             apply_next_wallpaper,
@@ -1176,6 +1270,25 @@ mod config_tests {
         assert!(csp.contains("default-src 'self'"));
         assert!(csp.contains("img-src 'self' asset: http://asset.localhost https: data:"));
         assert!(csp.contains("script-src 'self'"));
+        assert!(csp.contains("https://*.clerk.accounts.dev"));
+        assert!(csp.contains("frame-src https://*.clerk.accounts.dev https://*.clerk.com"));
+    }
+
+    #[test]
+    fn desktop_deep_link_scheme_is_configured() {
+        let config: Value =
+            serde_json::from_str(include_str!("../tauri.conf.json")).expect("config is valid JSON");
+        let schemes = config
+            .pointer("/plugins/deep-link/desktop/schemes")
+            .and_then(Value::as_array)
+            .expect("desktop deep-link schemes are configured");
+
+        assert!(
+            schemes
+                .iter()
+                .any(|entry| entry.as_str() == Some("wallpaper-engine")),
+            "wallpaper-engine:// deep link scheme is registered"
+        );
     }
 
     #[test]

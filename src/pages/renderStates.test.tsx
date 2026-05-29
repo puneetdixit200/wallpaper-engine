@@ -7,9 +7,11 @@ import {
   initialAppState,
 } from "../appState";
 import { WallCard } from "../components/WallCard";
+import { ControlsPage } from "./Controls";
 import { LibraryPage } from "./Library";
 import { SearchPage } from "./Search";
 import { SettingsPage } from "./Settings";
+import { SyncPage } from "./Sync";
 import { Wallpaper } from "../types";
 
 function wallpaper(id: string, favorite = false): Wallpaper {
@@ -60,6 +62,9 @@ function appValue(overrides: Partial<AppStateValue> = {}): AppStateValue {
       importLocalFolder: async () => null,
       exportBackup: async () => null,
       importBackup: asyncNoop,
+      testSupabaseSync: async () => null,
+      pushSupabaseSync: async () => null,
+      pullSupabaseSync: async () => null,
       runAutoCleanup: asyncNoop,
       applyNextWallpaper: asyncNoop,
       toggleAutoChangePause: async () => null,
@@ -180,15 +185,23 @@ describe("page render states", () => {
     expect(html).toContain("Export backup path");
   });
 
-  it("shows quality guard and hotkey controls in settings", () => {
+  it("keeps quality guard and hotkey controls out of settings", () => {
     const html = renderWithState(<SettingsPage />, appValue());
+
+    expect(html).toContain("Run auto-clean");
+    expect(html).not.toContain("Quality guard");
+    expect(html).not.toContain("Enable global hotkeys");
+  });
+
+  it("shows quality guard and hotkey controls in controls", () => {
+    const html = renderWithState(<ControlsPage />, appValue());
 
     expect(html).toContain("Quality guard");
     expect(html).toContain("Enable global hotkeys");
     expect(html).toContain("Next wallpaper hotkey");
     expect(html).toContain("Pause timer hotkey");
     expect(html).toContain("Favorite current hotkey");
-    expect(html).toContain("Run auto-clean");
+    expect(html).toContain("Save controls");
   });
 
   it("shows the GitHub credit in settings", () => {
@@ -197,5 +210,22 @@ describe("page render states", () => {
     expect(html).toContain("Made with");
     expect(html).toContain("https://github.com/puneetdixit200");
     expect(html).toContain("puneetdixit");
+  });
+
+  it("shows Supabase sync configuration and actions", () => {
+    const html = renderWithState(<SyncPage />, appValue());
+
+    expect(html).toContain("Supabase cloud sync");
+    expect(html).toContain("Project URL");
+    expect(html).toContain("Anon key");
+    expect(html).toContain("Sync ID");
+    expect(html).toContain("Use Clerk login for sync");
+    expect(html).toContain("Clerk publishable key");
+    expect(html).toContain("Clerk sign-in inactive");
+    expect(html).toContain("Not connected");
+    expect(html).toContain("Supabase sync is off.");
+    expect(html).toContain("wallpaper_engine_sync");
+    expect(html).toContain("Push");
+    expect(html).toContain("Pull");
   });
 });

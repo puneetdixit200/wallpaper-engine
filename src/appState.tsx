@@ -17,6 +17,9 @@ import {
   Mood,
   moodQueries,
   ImportResult,
+  SyncAuthContext,
+  SupabaseSyncApplyResult,
+  SupabaseSyncStatus,
   WallpaperLayoutPreference,
   ViewName,
   Wallpaper,
@@ -73,6 +76,15 @@ export interface AppActions {
   importLocalFolder: (folderPath: string) => Promise<ImportResult | null>;
   exportBackup: (targetPath: string) => Promise<string | null>;
   importBackup: (sourcePath: string) => Promise<void>;
+  testSupabaseSync: (
+    authContext?: SyncAuthContext | null,
+  ) => Promise<SupabaseSyncStatus | null>;
+  pushSupabaseSync: (
+    authContext?: SyncAuthContext | null,
+  ) => Promise<SupabaseSyncStatus | null>;
+  pullSupabaseSync: (
+    authContext?: SyncAuthContext | null,
+  ) => Promise<SupabaseSyncStatus | null>;
   runAutoCleanup: () => Promise<void>;
   applyNextWallpaper: () => Promise<void>;
   toggleAutoChangePause: () => Promise<boolean | null>;
@@ -500,6 +512,85 @@ export function AppStateProvider({ children }: AppStateProviderProps) {
     [refreshCacheStats, runWithStatus],
   );
 
+  const runSupabaseAction = useCallback(
+    async <T,>(
+      label: string,
+      action: () => Promise<T>,
+      statusFromResult: (result: T) => SupabaseSyncStatus,
+      applyResult?: (result: T) => Promise<void> | void,
+    ): Promise<SupabaseSyncStatus> => {
+      dispatch({ type: "busyChanged", busy: label });
+      dispatch({ type: "noticeChanged", notice: "" });
+      if (!isTauriRuntime()) {
+        const status = failedSyncStatus(
+          "Open the desktop app to test Supabase sync.",
+        );
+        dispatch({ type: "noticeChanged", notice: status.message });
+        dispatch({ type: "busyChanged", busy: null });
+        return status;
+      }
+
+      try {
+        const result = await action();
+        await applyResult?.(result);
+        const status = statusFromResult(result);
+        dispatch({ type: "noticeChanged", notice: syncNotice(status) });
+        return status;
+      } catch (error) {
+        const status = failedSyncStatus(String(error));
+        dispatch({ type: "noticeChanged", notice: status.message });
+        return status;
+      } finally {
+        dispatch({ type: "busyChanged", busy: null });
+      }
+    },
+    [],
+  );
+
+  const testSupabaseSync = useCallback(
+    async (authContext?: SyncAuthContext | null) =>
+      runSupabaseAction(
+        "supabase-test",
+        () =>
+          invoke<SupabaseSyncStatus>("test_supabase_sync", {
+            authContext: authContext ?? null,
+          }),
+        (status) => status,
+      ),
+    [runSupabaseAction],
+  );
+
+  const pushSupabaseSync = useCallback(
+    async (authContext?: SyncAuthContext | null) =>
+      runSupabaseAction(
+        "supabase-push",
+        () =>
+          invoke<SupabaseSyncStatus>("push_supabase_sync", {
+            authContext: authContext ?? null,
+          }),
+        (status) => status,
+      ),
+    [runSupabaseAction],
+  );
+
+  const pullSupabaseSync = useCallback(
+    async (authContext?: SyncAuthContext | null) =>
+      runSupabaseAction(
+        "supabase-pull",
+        () =>
+          invoke<SupabaseSyncApplyResult>("pull_supabase_sync", {
+            authContext: authContext ?? null,
+          }),
+        (result) => result.status,
+        async (result) => {
+          dispatch({ type: "settingsLoaded", settings: result.settings });
+          dispatch({ type: "libraryLoaded", library: result.library });
+          await refreshCacheStats();
+        },
+      ),
+    [refreshCacheStats, runSupabaseAction],
+  );
+
   const runAutoCleanup = useCallback(async () => {
     const stats = await runWithStatus(
       "auto-clean",
@@ -668,6 +759,9 @@ export function AppStateProvider({ children }: AppStateProviderProps) {
       importLocalFolder,
       exportBackup,
       importBackup,
+      testSupabaseSync,
+      pushSupabaseSync,
+      pullSupabaseSync,
       runAutoCleanup,
       applyNextWallpaper,
       toggleAutoChangePause,
@@ -697,6 +791,8 @@ export function AppStateProvider({ children }: AppStateProviderProps) {
       exportBackup,
       importBackup,
       importLocalFolder,
+      pullSupabaseSync,
+      pushSupabaseSync,
       removeWallpaperFromPlaylist,
       runAutoCleanup,
       saveFavorite,
@@ -705,6 +801,7 @@ export function AppStateProvider({ children }: AppStateProviderProps) {
       setLockScreenWallpaper,
       setWallpaper,
       setWallpaperWithLayout,
+      testSupabaseSync,
       toggleAutoChangePause,
     ],
   );
@@ -724,6 +821,23 @@ export function AppStateProvider({ children }: AppStateProviderProps) {
       {children}
     </AppStateContext.Provider>
   );
+}
+
+function syncNotice(status: SupabaseSyncStatus): string {
+  if (!status.connected) {
+    return status.message;
+  }
+  return status.updatedAt
+    ? `${status.message} Last cloud update: ${status.updatedAt}.`
+    : status.message;
+}
+
+function failedSyncStatus(message: string): SupabaseSyncStatus {
+  return {
+    connected: false,
+    message,
+    updatedAt: null,
+  };
 }
 
 export function useAppState(): AppStateValue {

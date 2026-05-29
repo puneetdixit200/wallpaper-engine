@@ -1,6 +1,6 @@
 # Wallpaper Engine Architecture
 
-This document describes the current architecture of Wallpaper Engine. The app is a Tauri 2 desktop application with a React/Vite frontend and a Rust backend. React owns presentation and interaction state. Rust owns provider API calls, settings persistence, SQLite metadata, file caching, image preparation, desktop wallpaper operations, and the auto-change scheduler.
+This document describes the current architecture of Wallpaper Engine. The app is a Tauri 2 desktop application with a React/Vite frontend and a Rust backend. React owns presentation, interaction state, and Clerk browser sign-in completion. Rust owns provider API calls, settings persistence, SQLite metadata, file caching, image preparation, desktop wallpaper operations, deep-link registration, and the auto-change scheduler.
 
 ## High-Level System
 
@@ -8,8 +8,11 @@ This document describes the current architecture of Wallpaper Engine. The app is
 flowchart LR
   User[User] --> React[React UI]
   React -->|Tauri invoke| Commands[Rust command layer]
+  React --> Clerk[Clerk auth]
+  Browser[System browser] -->|wallpaper-engine://auth/callback| React
   Commands --> Settings[settings.json]
   Commands --> API[Provider clients]
+  Commands --> Supabase[Supabase REST sync]
   Commands --> Cache[Wallpaper file cache]
   Commands --> SQLite[wallpapers.sqlite3]
   Commands --> OS[Desktop OS APIs and tools]
@@ -25,8 +28,9 @@ The frontend never calls wallpaper providers directly and never touches arbitrar
 
 ## Technology Stack
 
-- Frontend: React 19, TypeScript, Vite, lucide-react.
+- Frontend: React 19, TypeScript, Vite, lucide-react, Clerk React.
 - Desktop shell: Tauri 2.
+- Desktop plugins: opener, dialog, autostart, global shortcut, deep link, single instance.
 - Backend: Rust 2021.
 - HTTP: `reqwest` with Rustls TLS.
 - Persistence: JSON settings plus SQLite through `rusqlite`.
@@ -42,7 +46,7 @@ The frontend never calls wallpaper providers directly and never touches arbitrar
 |   |-- App.tsx                  # Root shell, sidebar, theme resolution
 |   |-- appState.tsx             # React reducer, context, Tauri action wrappers
 |   |-- types.ts                 # Frontend DTOs and settings types
-|   |-- pages/                   # Home, Search, Library, Settings views
+|   |-- pages/                   # Home, Search, Library, Sync, Controls, Settings views
 |   |-- components/              # Wall cards, empty states, skeletons, error boundary
 |   |-- searchFlow.ts            # Source-selection helper
 |   |-- settingsFlow.ts          # Settings input parsing helpers
@@ -56,6 +60,7 @@ The frontend never calls wallpaper providers directly and never touches arbitrar
 |       |-- lib.rs               # Tauri setup, commands, scheduler
 |       |-- models.rs            # Rust DTOs
 |       |-- settings.rs          # Settings schema and sanitization
+|       |-- sync.rs              # Supabase sync snapshot client
 |       |-- api.rs               # Provider clients and normalizers
 |       |-- cache.rs             # SQLite metadata and file cache
 |       `-- wallpaper.rs         # OS wallpaper integration and image resizing
@@ -73,7 +78,7 @@ The frontend state is centralized in `src/appState.tsx` using `useReducer` plus 
 
 | Field | Purpose |
 | --- | --- |
-| `activeView` | Current view: `home`, `search`, `library`, or `settings`. |
+| `activeView` | Current view: `home`, `search`, `library`, `sync`, `controls`, or `settings`. |
 | `settings` | Loaded and sanitized app settings. |
 | `currentWallpaper` | Wallpaper most recently applied through the UI. |
 | `library` | Favorites and downloaded wallpapers from SQLite. |
@@ -103,6 +108,8 @@ Important actions:
 - `applyNextFromMood`: picks a random mood query, fetches page 1, then applies a random returned wallpaper.
 - `setWallpaper`: downloads, prepares, applies, records, and refreshes state.
 - `saveSettings`: saves sanitized settings and restarts the backend scheduler.
+- `testSupabaseSync`, `pushSupabaseSync`, `pullSupabaseSync`: validate the Supabase connection and move a JSON settings/library snapshot through the configured project. In Clerk mode these actions pass the current Clerk session token and user ID to the Rust command.
+- `ClerkDeepLinkBridge`: receives `wallpaper-engine://auth/callback` URLs from Tauri, converts them to a local callback path, calls Clerk `handleRedirectCallback`, and returns the user to the Sync view.
 
 ### View Composition
 
@@ -118,6 +125,8 @@ Pages:
 - `HomePage`: current preview, provider status, mood chips, trending topics, random/next/save actions.
 - `SearchPage`: source selector, search box, grid, loading skeletons, empty state, and infinite scroll sentinel.
 - `LibraryPage`: favorite and downloaded sections with empty states and a confirmation before clearing metadata.
+- `SyncPage`: Supabase URL/anon-key/manual Sync ID inputs, Clerk publishable-key/sign-in controls, connection test, snapshot push/pull, and SQL table bootstrap.
+- `ControlsPage`: quality guard, lock-screen toggle, and global hotkey capture.
 - `SettingsPage`: API keys, theme, layout, auto-change interval, resolution, cache limit, NSFW toggle, save, and cache clear confirmation.
 
 Components:
@@ -139,6 +148,7 @@ The backend is split by responsibility:
 | `settings.rs` | Settings defaults, load/save, and sanitization. |
 | `api.rs` | Provider request construction, response parsing, result filtering. |
 | `cache.rs` | SQLite schema, upserts, library queries, cache stats, eviction. |
+| `sync.rs` | Supabase REST snapshot validation, Clerk/manual row identity resolution, push, pull, and portable-library import helpers. |
 | `wallpaper.rs` | Screen sizing, image resizing, OS wallpaper commands. |
 | `models.rs` | Serde DTOs shared across commands. |
 
@@ -179,7 +189,18 @@ Settings are stored as pretty JSON with camelCase keys:
   "theme": "system",
   "wallpaperLayout": "fit",
   "runInBackground": false,
-  "launchAtStartup": false
+  "launchAtStartup": false,
+  "supabaseSync": {
+    "enabled": false,
+    "projectUrl": "",
+    "anonKey": "",
+    "useClerkAuth": false,
+    "syncId": "default"
+  },
+  "clerkAuth": {
+    "enabled": false,
+    "publishableKey": ""
+  }
 }
 ```
 
@@ -188,6 +209,8 @@ Sanitization:
 - API keys are trimmed.
 - `autoChangeMinutes` is clamped to `0..=1440`.
 - `cacheLimitMb` is clamped to `128..=10240`.
+- Supabase project URLs are trimmed and pasted Postgres connection strings are normalized to `https://<project>.supabase.co` without storing the database password.
+- Clerk publishable keys are trimmed, and Clerk auth is disabled when the key is empty.
 
 Runtime effects:
 
@@ -199,6 +222,16 @@ Runtime effects:
 - `allowNsfwWallhaven` enables NSFW Wallhaven purity only when a Wallhaven key is also present.
 - `runInBackground` keeps the scheduler alive after close or OS-level quit.
 - `launchAtStartup` registers a hidden autostart entry. A positive `autoChangeMinutes` is sanitized to enable both background runtime and startup so scheduled wallpaper changes survive relaunches.
+- `supabaseSync` stores the local Supabase connection, manual Sync ID, and whether Clerk auth owns the row identity. Supabase credentials are not included inside cloud snapshots.
+- `clerkAuth` stores the local Clerk publishable key and whether the React shell should mount `ClerkProvider`.
+
+## Browser Auth Flow
+
+- The Tauri deep-link plugin registers the `wallpaper-engine` scheme from `tauri.conf.json`.
+- The single-instance plugin keeps callback launches routed to the running process on desktop builds.
+- `SyncPage` creates a Clerk Google OAuth sign-in attempt inside the WebView, opens the returned verification URL in the system browser, and uses `wallpaper-engine://auth/callback` as the completion URL.
+- `ClerkDeepLinkBridge` listens through `@tauri-apps/plugin-deep-link`, rewrites the callback into the WebView history as `/auth/callback`, and calls `clerk.handleRedirectCallback`.
+- After completion, normal Clerk React hooks expose `userId` and `getToken`; sync commands use those values for Supabase RLS.
 
 ## Provider Layer
 

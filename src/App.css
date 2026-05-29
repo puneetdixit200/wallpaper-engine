@@ -1209,6 +1209,191 @@ select:focus-visible {
   text-decoration: underline;
 }
 
+.sync-form {
+  align-content: start;
+}
+
+.sync-status-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.sync-connection {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: 12px;
+  align-items: flex-start;
+  min-width: 0;
+  padding: 14px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--surface-raised);
+}
+
+.sync-dot {
+  width: 11px;
+  height: 11px;
+  margin-top: 5px;
+  border-radius: 999px;
+  background: var(--muted);
+}
+
+.sync-connection[data-state="connected"] {
+  border-color: color-mix(in srgb, var(--accent) 45%, var(--border));
+  background: var(--accent-soft);
+}
+
+.sync-connection[data-state="connected"] .sync-dot {
+  background: var(--accent);
+}
+
+.sync-connection[data-state="checking"] .sync-dot {
+  background: var(--accent-strong);
+}
+
+.sync-connection[data-state="error"] {
+  border-color: color-mix(in srgb, var(--danger) 38%, var(--border));
+  background: color-mix(in srgb, var(--danger) 12%, var(--surface-raised));
+}
+
+.sync-connection[data-state="error"] .sync-dot {
+  background: var(--danger);
+}
+
+.sync-connection strong,
+.sync-connection span,
+.sync-connection small {
+  display: block;
+  overflow-wrap: anywhere;
+}
+
+.sync-connection strong {
+  color: var(--heading);
+}
+
+.sync-connection span,
+.sync-connection small {
+  margin-top: 3px;
+  color: var(--muted);
+  font-size: 0.86rem;
+  font-weight: 700;
+  line-height: 1.4;
+}
+
+.sync-auth-card {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  gap: 12px;
+  align-items: center;
+  min-width: 0;
+  padding: 14px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--surface-raised);
+}
+
+.sync-auth-card[data-active="true"] {
+  border-color: color-mix(in srgb, var(--accent) 42%, var(--border));
+  background: var(--accent-soft);
+}
+
+.sync-auth-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 34px;
+  height: 34px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  color: var(--heading);
+  background: var(--surface);
+}
+
+.sync-auth-card strong,
+.sync-auth-card span {
+  display: block;
+  overflow-wrap: anywhere;
+}
+
+.sync-auth-card strong {
+  color: var(--heading);
+}
+
+.sync-auth-card span {
+  margin-top: 3px;
+  color: var(--muted);
+  font-size: 0.86rem;
+  font-weight: 700;
+  line-height: 1.4;
+}
+
+.sync-auth-actions {
+  display: flex;
+  justify-content: flex-end;
+  min-width: max-content;
+}
+
+.browser-auth-actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+.sync-auth-message {
+  grid-column: 1 / -1;
+  overflow-wrap: anywhere;
+  color: var(--muted);
+  font-size: 0.82rem;
+  font-weight: 800;
+  line-height: 1.4;
+}
+
+.sync-stat {
+  display: grid;
+  gap: 6px;
+  min-width: 0;
+  padding: 14px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--surface-raised);
+}
+
+.sync-stat span {
+  color: var(--muted);
+  font-size: 0.78rem;
+  font-weight: 800;
+}
+
+.sync-stat strong {
+  color: var(--heading);
+  font-size: 1.35rem;
+  line-height: 1;
+}
+
+.sync-actions {
+  justify-content: flex-start;
+}
+
+.code-block {
+  max-width: 100%;
+  margin: 0;
+  overflow: auto;
+  padding: 14px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  color: var(--preview-muted);
+  background: var(--preview-bg);
+  font-size: 0.82rem;
+  line-height: 1.5;
+}
+
+.code-block code {
+  font-family:
+    "SFMono-Regular", Consolas, "Liberation Mono", Menlo, monospace;
+}
+
 @media (max-width: 860px) {
   .app-shell {
     grid-template-columns: 1fr;
@@ -1228,7 +1413,7 @@ select:focus-visible {
   }
 
   .nav-list {
-    grid-template-columns: repeat(4, minmax(58px, 1fr));
+    grid-template-columns: repeat(6, minmax(44px, 1fr));
     justify-content: stretch;
     overflow: hidden;
     width: 100%;
@@ -1281,8 +1466,23 @@ select:focus-visible {
   }
 
   .automation-controls,
-  .toggle-grid {
+  .toggle-grid,
+  .sync-status-grid {
     grid-template-columns: 1fr;
+  }
+
+  .sync-auth-card {
+    grid-template-columns: auto minmax(0, 1fr);
+  }
+
+  .sync-auth-actions {
+    grid-column: 1 / -1;
+    justify-content: flex-start;
+  }
+
+  .browser-auth-actions {
+    justify-content: flex-start;
+    width: 100%;
   }
 
   .segmented-control {
@@ -1294,7 +1494,7 @@ select:focus-visible {
 
 @media (max-width: 560px) {
   .nav-list {
-    grid-template-columns: repeat(4, minmax(48px, 1fr));
+    grid-template-columns: repeat(6, minmax(38px, 1fr));
   }
 
   .nav-item {

@@ -1,4 +1,10 @@
-export type ViewName = "home" | "search" | "library" | "settings";
+export type ViewName =
+  | "home"
+  | "search"
+  | "library"
+  | "sync"
+  | "controls"
+  | "settings";
 export type ApiSource =
   | "all"
   | "pexels"
@@ -63,6 +69,8 @@ export interface AppSettings {
   hotkeys: HotkeySettings;
   autoCleanDays: number;
   autoCleanKeepFavorites: boolean;
+  supabaseSync: SupabaseSyncSettings;
+  clerkAuth: ClerkAuthSettings;
 }
 
 export interface Wallpaper {
@@ -119,6 +127,36 @@ export interface HotkeySettings {
   favoriteCurrent: string;
 }
 
+export interface SupabaseSyncSettings {
+  enabled: boolean;
+  projectUrl: string;
+  anonKey: string;
+  useClerkAuth: boolean;
+  syncId: string;
+}
+
+export interface ClerkAuthSettings {
+  enabled: boolean;
+  publishableKey: string;
+}
+
+export interface SyncAuthContext {
+  accessToken: string;
+  userId: string;
+}
+
+export interface SupabaseSyncStatus {
+  connected: boolean;
+  message: string;
+  updatedAt: string | null;
+}
+
+export interface SupabaseSyncApplyResult {
+  status: SupabaseSyncStatus;
+  settings: AppSettings;
+  library: Library;
+}
+
 export const defaultSettings: AppSettings = {
   apiKeys: {
     pexels: "",
@@ -155,6 +193,17 @@ export const defaultSettings: AppSettings = {
   },
   autoCleanDays: 0,
   autoCleanKeepFavorites: true,
+  supabaseSync: {
+    enabled: false,
+    projectUrl: "",
+    anonKey: "",
+    useClerkAuth: false,
+    syncId: "default",
+  },
+  clerkAuth: {
+    enabled: false,
+    publishableKey: "",
+  },
 };
 
 export const moodQueries: Record<Mood, string[]> = {

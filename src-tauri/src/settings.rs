@@ -88,6 +88,30 @@ pub struct HotkeySettings {
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
+pub struct SupabaseSyncSettings {
+    #[serde(default)]
+    pub enabled: bool,
+    #[serde(default)]
+    pub project_url: String,
+    #[serde(default)]
+    pub anon_key: String,
+    #[serde(default)]
+    pub use_clerk_auth: bool,
+    #[serde(default = "default_supabase_sync_id")]
+    pub sync_id: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct ClerkAuthSettings {
+    #[serde(default)]
+    pub enabled: bool,
+    #[serde(default)]
+    pub publishable_key: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
 pub struct AppSettings {
     pub api_keys: ApiKeys,
     pub auto_change_minutes: u64,
@@ -125,6 +149,10 @@ pub struct AppSettings {
     pub auto_clean_days: u64,
     #[serde(default = "default_true")]
     pub auto_clean_keep_favorites: bool,
+    #[serde(default)]
+    pub supabase_sync: SupabaseSyncSettings,
+    #[serde(default)]
+    pub clerk_auth: ClerkAuthSettings,
 }
 
 impl Default for ApiKeys {
@@ -162,6 +190,8 @@ impl Default for AppSettings {
             hotkeys: HotkeySettings::default(),
             auto_clean_days: 0,
             auto_clean_keep_favorites: true,
+            supabase_sync: SupabaseSyncSettings::default(),
+            clerk_auth: ClerkAuthSettings::default(),
         }
     }
 }
@@ -195,6 +225,27 @@ impl Default for HotkeySettings {
             next_wallpaper: default_next_wallpaper_hotkey(),
             pause_rotation: default_pause_rotation_hotkey(),
             favorite_current: default_favorite_current_hotkey(),
+        }
+    }
+}
+
+impl Default for SupabaseSyncSettings {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            project_url: String::new(),
+            anon_key: String::new(),
+            use_clerk_auth: false,
+            sync_id: default_supabase_sync_id(),
+        }
+    }
+}
+
+impl Default for ClerkAuthSettings {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            publishable_key: String::new(),
         }
     }
 }
@@ -248,6 +299,8 @@ impl AppSettings {
             &default_favorite_current_hotkey(),
         );
         self.auto_clean_days = self.auto_clean_days.min(365);
+        self.supabase_sync = self.supabase_sync.sanitized();
+        self.clerk_auth = self.clerk_auth.sanitized();
         if self.auto_change_minutes > 0 {
             self.launch_at_startup = true;
         }
@@ -256,6 +309,55 @@ impl AppSettings {
         }
         self
     }
+}
+
+impl SupabaseSyncSettings {
+    pub fn sanitized(mut self) -> Self {
+        self.project_url = normalize_supabase_project_url(&self.project_url);
+        self.anon_key = self.anon_key.trim().to_string();
+        self.sync_id = self.sync_id.trim().to_string();
+        if self.use_clerk_auth {
+            self.enabled = true;
+        }
+        if self.sync_id.is_empty() {
+            self.sync_id = default_supabase_sync_id();
+        }
+        self
+    }
+}
+
+impl ClerkAuthSettings {
+    pub fn sanitized(mut self) -> Self {
+        self.publishable_key = self.publishable_key.trim().to_string();
+        if self.publishable_key.is_empty() {
+            self.enabled = false;
+        }
+        self
+    }
+}
+
+fn normalize_supabase_project_url(value: &str) -> String {
+    let trimmed = value.trim().trim_end_matches('/');
+    if let Some(project_ref) = supabase_ref_from_postgres_url(trimmed) {
+        return format!("https://{project_ref}.supabase.co");
+    }
+    trimmed.to_string()
+}
+
+fn supabase_ref_from_postgres_url(value: &str) -> Option<String> {
+    let rest = value
+        .strip_prefix("postgresql://")
+        .or_else(|| value.strip_prefix("postgres://"))?;
+    let host = rest.split('@').nth(1)?.split([':', '/']).next()?;
+    host.strip_prefix("db.")
+        .and_then(|host| host.strip_suffix(".supabase.co"))
+        .filter(|project_ref| {
+            !project_ref.is_empty()
+                && project_ref
+                    .chars()
+                    .all(|ch| ch.is_ascii_lowercase() || ch.is_ascii_digit())
+        })
+        .map(str::to_string)
 }
 
 fn default_quality_min_width() -> u32 {
@@ -280,6 +382,10 @@ fn default_pause_rotation_hotkey() -> String {
 
 fn default_favorite_current_hotkey() -> String {
     "CommandOrControl+Alt+F".into()
+}
+
+fn default_supabase_sync_id() -> String {
+    "default".into()
 }
 
 fn normalize_hotkey(value: &str, fallback: &str) -> String {
@@ -482,6 +588,8 @@ mod tests {
         assert!(settings.global_hotkeys_enabled);
         assert!(!settings.apply_to_lock_screen);
         assert!(settings.auto_clean_keep_favorites);
+        assert_eq!(settings.supabase_sync, SupabaseSyncSettings::default());
+        assert_eq!(settings.clerk_auth, ClerkAuthSettings::default());
         assert_eq!(
             settings.search_filters.orientation,
             SearchOrientationFilter::Any
@@ -506,6 +614,17 @@ mod tests {
                 favorite_current: String::new(),
             },
             auto_clean_days: 800,
+            supabase_sync: SupabaseSyncSettings {
+                enabled: true,
+                project_url: " https://example.supabase.co/ ".into(),
+                anon_key: " anon-key ".into(),
+                use_clerk_auth: true,
+                sync_id: " ".into(),
+            },
+            clerk_auth: ClerkAuthSettings {
+                enabled: true,
+                publishable_key: " pk_test_example ".into(),
+            },
             ..AppSettings::default()
         }
         .sanitized();
@@ -519,6 +638,38 @@ mod tests {
         assert_eq!(settings.hotkeys.pause_rotation, "Control+Shift+P");
         assert_eq!(settings.hotkeys.favorite_current, "CommandOrControl+Alt+F");
         assert_eq!(settings.auto_clean_days, 365);
+        assert_eq!(
+            settings.supabase_sync.project_url,
+            "https://example.supabase.co"
+        );
+        assert_eq!(settings.supabase_sync.anon_key, "anon-key");
+        assert!(settings.supabase_sync.enabled);
+        assert!(settings.supabase_sync.use_clerk_auth);
+        assert_eq!(settings.supabase_sync.sync_id, "default");
+        assert_eq!(settings.clerk_auth.publishable_key, "pk_test_example");
+    }
+
+    #[test]
+    fn supabase_sync_accepts_postgres_connection_string_as_project_url() {
+        let settings = AppSettings {
+            supabase_sync: SupabaseSyncSettings {
+                enabled: true,
+                project_url:
+                    "postgresql://postgres:secret@db.fhqfqrdtdmoaxudbyyrb.supabase.co:5432/postgres"
+                        .into(),
+                anon_key: "anon-key".into(),
+                use_clerk_auth: false,
+                sync_id: "desktop".into(),
+            },
+            ..AppSettings::default()
+        }
+        .sanitized();
+
+        assert_eq!(
+            settings.supabase_sync.project_url,
+            "https://fhqfqrdtdmoaxudbyyrb.supabase.co"
+        );
+        assert!(!settings.supabase_sync.project_url.contains("secret"));
     }
 
     #[test]
@@ -541,6 +692,7 @@ mod tests {
         assert!(loaded.global_hotkeys_enabled);
         assert_eq!(loaded.search_filters, SearchFilters::default());
         assert_eq!(loaded.hotkeys, HotkeySettings::default());
+        assert_eq!(loaded.supabase_sync, SupabaseSyncSettings::default());
 
         let _ = fs::remove_file(path);
     }
