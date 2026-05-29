@@ -1,10 +1,10 @@
-# Wallpaper Engine - Automatic Desktop Wallpaper Changer
+# Wallpaper Engine - Free Automatic Wallpaper Changer for Windows, macOS, and Linux
 
 [![Build desktop app](https://github.com/puneetdixit200/wallpaper-engine/actions/workflows/build.yml/badge.svg)](https://github.com/puneetdixit200/wallpaper-engine/actions/workflows/build.yml)
 
-Wallpaper Engine is an open-source desktop wallpaper changer for Windows, macOS, and Linux. It helps you search wallpaper providers, download high-resolution images, save favorites, manage a local wallpaper library, and automatically rotate wallpapers in the background after the main window is closed.
+Wallpaper Engine is a free, open-source desktop wallpaper changer for Windows, macOS, and Linux. It searches high-resolution wallpapers from Pexels, Unsplash, Pixabay, Wallhaven, DeviantArt, and no-key fallback providers, then applies them as your desktop background with automatic wallpaper rotation.
 
-Use it as a lightweight Tauri wallpaper manager for Pexels, Unsplash, Pixabay, Wallhaven, DeviantArt, local cache management, tray background mode, startup wallpaper updates, and one-click desktop wallpaper application.
+Use it as a lightweight Tauri wallpaper manager, automatic wallpaper changer, wallpaper downloader, local wallpaper library, favorites manager, and tray-based background wallpaper service. The app can keep rotating wallpapers after the main window is closed, launch on startup, sync settings through Supabase, and keep a local action log for debugging.
 
 ## Quick Links
 
@@ -36,14 +36,23 @@ shasum -a 256 -c installers/SHA256SUMS
 
 On Linux, `sha256sum -c installers/SHA256SUMS` also works.
 
-## Why Use Wallpaper Engine
+## Why Use This Wallpaper Changer
 
-- Search multiple wallpaper sources from one desktop app instead of opening separate sites.
-- Keep original high-resolution files in the local cache so wallpapers stay sharp before they are set.
-- Save favorites, delete individual wallpapers, or clear the full local wallpaper library from the app.
-- Run background wallpaper rotation from the tray after closing the window.
-- Enable startup behavior so wallpaper auto-change resumes after login.
-- Use committed installers for Windows, macOS, and Linux with checksum verification.
+- Free automatic wallpaper changer for Windows, macOS, and Linux.
+- Multi-source wallpaper search for Pexels, Unsplash, Pixabay, Wallhaven, DeviantArt, and fallback providers.
+- High-resolution wallpaper downloads with local cache preservation so images stay sharp before being applied.
+- Desktop wallpaper rotation in the background, even after closing the main app window.
+- Tray controls, global hotkeys, startup launch, favorites, playlists, and one-by-one wallpaper deletion.
+- Supabase cloud sync for settings, provider keys, favorites, playlists, and wallpaper source URLs.
+- Committed EXE, MSI, DMG, AppImage, DEB, and RPM installers with SHA-256 checksums.
+
+## Best For
+
+- Users who want an open-source Wallpaper Engine alternative focused on desktop wallpaper rotation.
+- Windows users who want a setup EXE, MSI, tray mode, startup app support, and a standalone uninstaller.
+- macOS Apple Silicon users who want a DMG wallpaper app with background auto-change.
+- Linux users who want AppImage, DEB, or RPM packages for GNOME-compatible wallpaper updates.
+- Developers who want a Tauri wallpaper app example with React, Rust, SQLite, Supabase sync, Clerk login, and cross-platform installers.
 
 ## Features
 
