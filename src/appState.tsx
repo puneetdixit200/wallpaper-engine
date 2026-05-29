@@ -16,8 +16,11 @@ import {
   Library,
   Mood,
   moodQueries,
+  ImportResult,
+  WallpaperLayoutPreference,
   ViewName,
   Wallpaper,
+  WallpaperQualityReport,
 } from "./types";
 import { sourceSelectionSearch } from "./searchFlow";
 import { pickRandomMoodQuery, pickRandomWallpaper } from "./wallpaperSelection";
@@ -48,7 +51,31 @@ export interface AppActions {
   ) => Promise<void>;
   changeSource: (source: ApiSource) => Promise<void>;
   setWallpaper: (wallpaper: Wallpaper) => Promise<void>;
+  setWallpaperWithLayout: (
+    wallpaper: Wallpaper,
+    layout: WallpaperLayoutPreference,
+  ) => Promise<void>;
+  setLockScreenWallpaper: (wallpaper: Wallpaper) => Promise<void>;
+  assessWallpaperQuality: (
+    wallpaper: Wallpaper,
+  ) => Promise<WallpaperQualityReport | null>;
   saveFavorite: (wallpaper: Wallpaper) => Promise<void>;
+  createPlaylist: (name: string) => Promise<void>;
+  deletePlaylist: (playlistId: string) => Promise<void>;
+  addWallpaperToPlaylist: (
+    playlistId: string,
+    wallpaper: Wallpaper,
+  ) => Promise<void>;
+  removeWallpaperFromPlaylist: (
+    playlistId: string,
+    wallpaperId: string,
+  ) => Promise<void>;
+  importLocalFolder: (folderPath: string) => Promise<ImportResult | null>;
+  exportBackup: (targetPath: string) => Promise<string | null>;
+  importBackup: (sourcePath: string) => Promise<void>;
+  runAutoCleanup: () => Promise<void>;
+  applyNextWallpaper: () => Promise<void>;
+  toggleAutoChangePause: () => Promise<boolean | null>;
   applyRandomWallpaper: () => Promise<void>;
   applyMood: (mood: Mood) => Promise<void>;
   applyTopic: (query: string) => Promise<void>;
@@ -85,6 +112,7 @@ export const initialAppState: AppState = {
   library: {
     favorites: [],
     downloaded: [],
+    playlists: [],
   },
   cacheStats: {
     bytes: 0,
@@ -264,8 +292,34 @@ export function AppStateProvider({ children }: AppStateProviderProps) {
     [searchWallpapers, state.query],
   );
 
+  const shouldApplyAfterQualityWarning = useCallback(
+    async (wallpaper: Wallpaper) => {
+      if (state.settings.qualityGuardMode !== "warn" || !isTauriRuntime()) {
+        return true;
+      }
+
+      try {
+        const report = await invoke<WallpaperQualityReport>(
+          "assess_wallpaper_quality",
+          { wallpaper },
+        );
+        return (
+          report.warnings.length === 0 ||
+          window.confirm(`Apply anyway?\n\n${report.warnings.join("\n")}`)
+        );
+      } catch (error) {
+        dispatch({ type: "noticeChanged", notice: String(error) });
+        return false;
+      }
+    },
+    [state.settings.qualityGuardMode],
+  );
+
   const setWallpaper = useCallback(
     async (wallpaper: Wallpaper) => {
+      if (!(await shouldApplyAfterQualityWarning(wallpaper))) {
+        return;
+      }
       const applied = await runWithStatus(
         `set-${wallpaper.id}`,
         () => invoke<Wallpaper>("set_wallpaper", { wallpaper }),
@@ -276,7 +330,50 @@ export function AppStateProvider({ children }: AppStateProviderProps) {
         await Promise.all([refreshLibrary(), refreshCacheStats()]);
       }
     },
-    [refreshCacheStats, refreshLibrary, runWithStatus],
+    [refreshCacheStats, refreshLibrary, runWithStatus, shouldApplyAfterQualityWarning],
+  );
+
+  const setWallpaperWithLayout = useCallback(
+    async (wallpaper: Wallpaper, layout: WallpaperLayoutPreference) => {
+      if (!(await shouldApplyAfterQualityWarning(wallpaper))) {
+        return;
+      }
+      const applied = await runWithStatus(
+        `set-${wallpaper.id}`,
+        () =>
+          invoke<Wallpaper>("set_wallpaper_with_layout", {
+            wallpaper,
+            layout,
+          }),
+        "Wallpaper applied.",
+      );
+      if (applied) {
+        dispatch({ type: "currentWallpaperChanged", wallpaper: applied });
+        await Promise.all([refreshLibrary(), refreshCacheStats()]);
+      }
+    },
+    [refreshCacheStats, refreshLibrary, runWithStatus, shouldApplyAfterQualityWarning],
+  );
+
+  const setLockScreenWallpaper = useCallback(
+    async (wallpaper: Wallpaper) => {
+      await runWithStatus(
+        `lock-${wallpaper.id}`,
+        () => invoke<void>("set_lock_screen_wallpaper", { wallpaper }),
+        "Lock-screen wallpaper updated.",
+      );
+    },
+    [runWithStatus],
+  );
+
+  const assessWallpaperQuality = useCallback(
+    async (wallpaper: Wallpaper) =>
+      runWithStatus("quality", () =>
+        invoke<WallpaperQualityReport>("assess_wallpaper_quality", {
+          wallpaper,
+        }),
+      ),
+    [runWithStatus],
   );
 
   const saveFavorite = useCallback(
@@ -297,6 +394,124 @@ export function AppStateProvider({ children }: AppStateProviderProps) {
     [runWithStatus, state.library.favorites],
   );
 
+  const createPlaylist = useCallback(
+    async (name: string) => {
+      const nextLibrary = await runWithStatus(
+        "playlist",
+        () => invoke<Library>("create_playlist", { name }),
+        "Playlist created.",
+      );
+      if (nextLibrary) {
+        dispatch({ type: "libraryLoaded", library: nextLibrary });
+      }
+    },
+    [runWithStatus],
+  );
+
+  const deletePlaylist = useCallback(
+    async (playlistId: string) => {
+      const nextLibrary = await runWithStatus(
+        `playlist-${playlistId}`,
+        () => invoke<Library>("delete_playlist", { playlistId }),
+        "Playlist deleted.",
+      );
+      if (nextLibrary) {
+        dispatch({ type: "libraryLoaded", library: nextLibrary });
+      }
+    },
+    [runWithStatus],
+  );
+
+  const addWallpaperToPlaylist = useCallback(
+    async (playlistId: string, wallpaper: Wallpaper) => {
+      const nextLibrary = await runWithStatus(
+        `playlist-${wallpaper.id}`,
+        () =>
+          invoke<Library>("add_wallpaper_to_playlist", {
+            playlistId,
+            wallpaper,
+          }),
+        "Added to playlist.",
+      );
+      if (nextLibrary) {
+        dispatch({ type: "libraryLoaded", library: nextLibrary });
+      }
+    },
+    [runWithStatus],
+  );
+
+  const removeWallpaperFromPlaylist = useCallback(
+    async (playlistId: string, wallpaperId: string) => {
+      const nextLibrary = await runWithStatus(
+        `playlist-${wallpaperId}`,
+        () =>
+          invoke<Library>("remove_wallpaper_from_playlist", {
+            playlistId,
+            wallpaperId,
+          }),
+        "Removed from playlist.",
+      );
+      if (nextLibrary) {
+        dispatch({ type: "libraryLoaded", library: nextLibrary });
+      }
+    },
+    [runWithStatus],
+  );
+
+  const importLocalFolder = useCallback(
+    async (folderPath: string) => {
+      const result = await runWithStatus(
+        "import-folder",
+        () => invoke<ImportResult>("import_local_folder", { folderPath }),
+        "Local folder imported.",
+      );
+      if (result) {
+        await Promise.all([refreshLibrary(), refreshCacheStats()]);
+      }
+      return result;
+    },
+    [refreshCacheStats, refreshLibrary, runWithStatus],
+  );
+
+  const exportBackup = useCallback(
+    async (targetPath: string) =>
+      runWithStatus(
+        "backup",
+        () => invoke<string>("export_backup", { targetPath }),
+        "Backup exported.",
+      ),
+    [runWithStatus],
+  );
+
+  const importBackup = useCallback(
+    async (sourcePath: string) => {
+      const nextLibrary = await runWithStatus(
+        "backup",
+        () => invoke<Library>("import_backup", { sourcePath }),
+        "Backup imported.",
+      );
+      if (nextLibrary) {
+        dispatch({ type: "libraryLoaded", library: nextLibrary });
+        const loaded = await invoke<AppSettings>("get_settings");
+        dispatch({ type: "settingsLoaded", settings: loaded });
+        await refreshCacheStats();
+      }
+    },
+    [refreshCacheStats, runWithStatus],
+  );
+
+  const runAutoCleanup = useCallback(async () => {
+    const stats = await runWithStatus(
+      "auto-clean",
+      () => invoke<CacheStats>("run_auto_cleanup"),
+      "Auto-clean complete.",
+    );
+    if (stats) {
+      dispatch({ type: "cacheStatsLoaded", cacheStats: stats });
+      await refreshLibrary();
+    }
+  }, [refreshLibrary, runWithStatus]);
+
   const applyRandomWallpaper = useCallback(async () => {
     const wallpaper = await runWithStatus(
       "random",
@@ -308,6 +523,28 @@ export function AppStateProvider({ children }: AppStateProviderProps) {
       await Promise.all([refreshLibrary(), refreshCacheStats()]);
     }
   }, [refreshCacheStats, refreshLibrary, runWithStatus]);
+
+  const applyNextWallpaper = useCallback(async () => {
+    const wallpaper = await runWithStatus(
+      "next",
+      () => invoke<Wallpaper>("apply_next_wallpaper"),
+      "Next wallpaper applied.",
+    );
+    if (wallpaper) {
+      dispatch({ type: "currentWallpaperChanged", wallpaper });
+      await Promise.all([refreshLibrary(), refreshCacheStats()]);
+    }
+  }, [refreshCacheStats, refreshLibrary, runWithStatus]);
+
+  const toggleAutoChangePause = useCallback(
+    async () =>
+      runWithStatus(
+        "pause",
+        () => invoke<boolean>("toggle_auto_change_pause"),
+        "Auto-change pause toggled.",
+      ),
+    [runWithStatus],
+  );
 
   const applyMood = useCallback(
     async (nextMood: Mood) => {
@@ -420,7 +657,20 @@ export function AppStateProvider({ children }: AppStateProviderProps) {
       searchWallpapers,
       changeSource,
       setWallpaper,
+      setWallpaperWithLayout,
+      setLockScreenWallpaper,
+      assessWallpaperQuality,
       saveFavorite,
+      createPlaylist,
+      deletePlaylist,
+      addWallpaperToPlaylist,
+      removeWallpaperFromPlaylist,
+      importLocalFolder,
+      exportBackup,
+      importBackup,
+      runAutoCleanup,
+      applyNextWallpaper,
+      toggleAutoChangePause,
       applyRandomWallpaper,
       applyMood,
       applyTopic,
@@ -431,18 +681,31 @@ export function AppStateProvider({ children }: AppStateProviderProps) {
       saveSettings,
     }),
     [
+      addWallpaperToPlaylist,
+      applyNextWallpaper,
       applyMood,
       applyNextFromMood,
       applyRandomWallpaper,
       applyTopic,
+      assessWallpaperQuality,
       changeSource,
       clearLibrary,
       clearWallpaperCache,
+      createPlaylist,
       deleteWallpaper,
+      deletePlaylist,
+      exportBackup,
+      importBackup,
+      importLocalFolder,
+      removeWallpaperFromPlaylist,
+      runAutoCleanup,
       saveFavorite,
       saveSettings,
       searchWallpapers,
+      setLockScreenWallpaper,
       setWallpaper,
+      setWallpaperWithLayout,
+      toggleAutoChangePause,
     ],
   );
 

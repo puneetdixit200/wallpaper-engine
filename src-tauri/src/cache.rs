@@ -1,9 +1,12 @@
-use crate::models::{CacheStats, Library, Wallpaper};
+use crate::models::{CacheStats, ImportResult, Library, Wallpaper, WallpaperPlaylist};
+use image::GenericImageView;
 use reqwest::header::CONTENT_TYPE;
 use reqwest::Client;
 use rusqlite::{params, Connection};
+use std::collections::hash_map::DefaultHasher;
 use std::collections::HashMap;
 use std::fs;
+use std::hash::{Hash, Hasher};
 use std::path::{Path, PathBuf};
 use std::sync::{Mutex, OnceLock};
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -47,6 +50,19 @@ pub fn init_database(db_path: &Path) -> Result<(), String> {
                 last_used   TEXT,
                 created_at  TEXT NOT NULL
             );
+
+            CREATE TABLE IF NOT EXISTS playlists (
+                id          TEXT PRIMARY KEY,
+                name        TEXT NOT NULL UNIQUE,
+                created_at  TEXT NOT NULL
+            );
+
+            CREATE TABLE IF NOT EXISTS playlist_wallpapers (
+                playlist_id TEXT NOT NULL,
+                wallpaper_id TEXT NOT NULL,
+                created_at  TEXT NOT NULL,
+                PRIMARY KEY (playlist_id, wallpaper_id)
+            );
             "#,
         )
         .map_err(|error| format!("Could not initialize wallpaper database: {error}"))?;
@@ -88,7 +104,17 @@ pub fn set_favorite(db_path: &Path, wallpaper: &Wallpaper, favorite: bool) -> Re
         .map_err(|error| format!("Could not update favorite metadata: {error}"))?;
     connection
         .execute(
-            "DELETE FROM wallpapers WHERE id = ?1 AND is_favorite = 0 AND local_path IS NULL AND used_count = 0",
+            r#"
+            DELETE FROM wallpapers
+            WHERE id = ?1
+              AND is_favorite = 0
+              AND local_path IS NULL
+              AND used_count = 0
+              AND NOT EXISTS (
+                SELECT 1 FROM playlist_wallpapers
+                WHERE playlist_wallpapers.wallpaper_id = wallpapers.id
+              )
+            "#,
             params![wallpaper.id],
         )
         .map_err(|error| format!("Could not remove unused favorite metadata: {error}"))?;
@@ -181,7 +207,239 @@ pub fn list_library(db_path: &Path) -> Result<Library, String> {
             db_path,
             "WHERE local_path IS NOT NULL ORDER BY last_used DESC, created_at DESC",
         )?,
+        playlists: list_playlists(db_path)?,
     })
+}
+
+pub fn list_playlists(db_path: &Path) -> Result<Vec<WallpaperPlaylist>, String> {
+    init_database(db_path)?;
+    let connection = Connection::open(db_path)
+        .map_err(|error| format!("Could not open wallpaper database: {error}"))?;
+    let mut statement = connection
+        .prepare("SELECT id, name FROM playlists ORDER BY created_at DESC, name ASC")
+        .map_err(|error| format!("Could not prepare playlist query: {error}"))?;
+    let playlists = statement
+        .query_map([], |row| {
+            Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+        })
+        .map_err(|error| format!("Could not query playlists: {error}"))?
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|error| format!("Could not read playlists: {error}"))?;
+
+    playlists
+        .into_iter()
+        .map(|(id, name)| {
+            Ok(WallpaperPlaylist {
+                wallpapers: query_playlist_wallpapers(db_path, &id)?,
+                id,
+                name,
+            })
+        })
+        .collect()
+}
+
+fn query_playlist_wallpapers(db_path: &Path, playlist_id: &str) -> Result<Vec<Wallpaper>, String> {
+    let connection = Connection::open(db_path)
+        .map_err(|error| format!("Could not open wallpaper database: {error}"))?;
+    let mut statement = connection
+        .prepare(
+            r#"
+            SELECT w.id, w.source, w.url_thumb, w.url_full, w.photographer,
+                   w.width, w.height, w.query_used, w.mood, w.local_path,
+                   w.is_favorite
+            FROM playlist_wallpapers pw
+            JOIN wallpapers w ON w.id = pw.wallpaper_id
+            WHERE pw.playlist_id = ?1
+            ORDER BY pw.created_at DESC
+            "#,
+        )
+        .map_err(|error| format!("Could not prepare playlist wallpaper query: {error}"))?;
+    let rows = statement
+        .query_map(params![playlist_id], |row| {
+            Ok(Wallpaper {
+                id: row.get(0)?,
+                source: row.get(1)?,
+                thumb_url: row.get(2)?,
+                full_url: row.get(3)?,
+                photographer: row.get(4)?,
+                width: row.get(5)?,
+                height: row.get(6)?,
+                query_used: row.get(7)?,
+                mood: row.get(8)?,
+                local_path: row.get(9)?,
+                is_favorite: row.get::<_, i64>(10)? == 1,
+            })
+        })
+        .map_err(|error| format!("Could not query playlist wallpapers: {error}"))?;
+
+    rows.collect::<Result<Vec<_>, _>>()
+        .map_err(|error| format!("Could not read playlist wallpaper rows: {error}"))
+}
+
+pub fn create_playlist(db_path: &Path, name: &str) -> Result<Library, String> {
+    init_database(db_path)?;
+    let name = name.trim();
+    if name.is_empty() {
+        return Err("Playlist name is required.".into());
+    }
+    let id = format!(
+        "playlist-{}-{}",
+        safe_file_stem(name),
+        unix_timestamp_string()
+    );
+    let connection = Connection::open(db_path)
+        .map_err(|error| format!("Could not open wallpaper database: {error}"))?;
+    connection
+        .execute(
+            r#"
+            INSERT INTO playlists (id, name, created_at)
+            VALUES (?1, ?2, ?3)
+            ON CONFLICT(name) DO NOTHING
+            "#,
+            params![id, name, unix_timestamp_string()],
+        )
+        .map_err(|error| format!("Could not create playlist: {error}"))?;
+    list_library(db_path)
+}
+
+pub fn delete_playlist(db_path: &Path, playlist_id: &str) -> Result<Library, String> {
+    init_database(db_path)?;
+    let connection = Connection::open(db_path)
+        .map_err(|error| format!("Could not open wallpaper database: {error}"))?;
+    connection
+        .execute(
+            "DELETE FROM playlist_wallpapers WHERE playlist_id = ?1",
+            params![playlist_id],
+        )
+        .map_err(|error| format!("Could not clear playlist wallpapers: {error}"))?;
+    connection
+        .execute("DELETE FROM playlists WHERE id = ?1", params![playlist_id])
+        .map_err(|error| format!("Could not delete playlist: {error}"))?;
+    list_library(db_path)
+}
+
+pub fn add_wallpaper_to_playlist(
+    db_path: &Path,
+    playlist_id: &str,
+    wallpaper: &Wallpaper,
+) -> Result<Library, String> {
+    init_database(db_path)?;
+    upsert_wallpaper(
+        db_path,
+        wallpaper,
+        wallpaper.local_path.as_deref().map(Path::new),
+        false,
+        false,
+    )?;
+    let connection = Connection::open(db_path)
+        .map_err(|error| format!("Could not open wallpaper database: {error}"))?;
+    let exists: i64 = connection
+        .query_row(
+            "SELECT COUNT(*) FROM playlists WHERE id = ?1",
+            params![playlist_id],
+            |row| row.get(0),
+        )
+        .map_err(|error| format!("Could not check playlist: {error}"))?;
+    if exists == 0 {
+        return Err("Playlist was not found.".into());
+    }
+    connection
+        .execute(
+            r#"
+            INSERT INTO playlist_wallpapers (playlist_id, wallpaper_id, created_at)
+            VALUES (?1, ?2, ?3)
+            ON CONFLICT(playlist_id, wallpaper_id) DO NOTHING
+            "#,
+            params![playlist_id, wallpaper.id, unix_timestamp_string()],
+        )
+        .map_err(|error| format!("Could not add wallpaper to playlist: {error}"))?;
+    list_library(db_path)
+}
+
+pub fn remove_wallpaper_from_playlist(
+    db_path: &Path,
+    playlist_id: &str,
+    wallpaper_id: &str,
+) -> Result<Library, String> {
+    init_database(db_path)?;
+    let connection = Connection::open(db_path)
+        .map_err(|error| format!("Could not open wallpaper database: {error}"))?;
+    connection
+        .execute(
+            "DELETE FROM playlist_wallpapers WHERE playlist_id = ?1 AND wallpaper_id = ?2",
+            params![playlist_id, wallpaper_id],
+        )
+        .map_err(|error| format!("Could not remove wallpaper from playlist: {error}"))?;
+    list_library(db_path)
+}
+
+pub fn random_playlist_wallpaper(
+    db_path: &Path,
+    playlist_id: &str,
+) -> Result<Option<Wallpaper>, String> {
+    init_database(db_path)?;
+    let connection = Connection::open(db_path)
+        .map_err(|error| format!("Could not open wallpaper database: {error}"))?;
+    let mut statement = connection
+        .prepare(
+            r#"
+            SELECT w.id, w.source, w.url_thumb, w.url_full, w.photographer,
+                   w.width, w.height, w.query_used, w.mood, w.local_path,
+                   w.is_favorite
+            FROM playlist_wallpapers pw
+            JOIN wallpapers w ON w.id = pw.wallpaper_id
+            WHERE pw.playlist_id = ?1
+            ORDER BY RANDOM()
+            LIMIT 1
+            "#,
+        )
+        .map_err(|error| format!("Could not prepare playlist random query: {error}"))?;
+    let mut rows = statement
+        .query(params![playlist_id])
+        .map_err(|error| format!("Could not query playlist random wallpaper: {error}"))?;
+    if let Some(row) = rows
+        .next()
+        .map_err(|error| format!("Could not read playlist random wallpaper: {error}"))?
+    {
+        Ok(Some(Wallpaper {
+            id: row
+                .get(0)
+                .map_err(|error| format!("Could not read wallpaper id: {error}"))?,
+            source: row
+                .get(1)
+                .map_err(|error| format!("Could not read wallpaper source: {error}"))?,
+            thumb_url: row
+                .get(2)
+                .map_err(|error| format!("Could not read wallpaper thumb: {error}"))?,
+            full_url: row
+                .get(3)
+                .map_err(|error| format!("Could not read wallpaper full URL: {error}"))?,
+            photographer: row
+                .get(4)
+                .map_err(|error| format!("Could not read wallpaper photographer: {error}"))?,
+            width: row
+                .get(5)
+                .map_err(|error| format!("Could not read wallpaper width: {error}"))?,
+            height: row
+                .get(6)
+                .map_err(|error| format!("Could not read wallpaper height: {error}"))?,
+            query_used: row
+                .get(7)
+                .map_err(|error| format!("Could not read wallpaper query: {error}"))?,
+            mood: row
+                .get(8)
+                .map_err(|error| format!("Could not read wallpaper mood: {error}"))?,
+            local_path: row
+                .get(9)
+                .map_err(|error| format!("Could not read wallpaper local path: {error}"))?,
+            is_favorite: row
+                .get::<_, i64>(10)
+                .map_err(|error| format!("Could not read wallpaper favorite state: {error}"))?
+                == 1,
+        }))
+    } else {
+        Ok(None)
+    }
 }
 
 pub fn clear_library(db_path: &Path, cache_dir: &Path) -> Result<(), String> {
@@ -208,6 +466,12 @@ pub fn clear_library(db_path: &Path, cache_dir: &Path) -> Result<(), String> {
 
     clear_cache_files(cache_dir)?;
 
+    connection
+        .execute("DELETE FROM playlist_wallpapers", [])
+        .map_err(|error| format!("Could not clear playlist wallpapers: {error}"))?;
+    connection
+        .execute("DELETE FROM playlists", [])
+        .map_err(|error| format!("Could not clear playlists: {error}"))?;
     connection
         .execute("DELETE FROM wallpapers", [])
         .map_err(|error| format!("Could not clear library: {error}"))?;
@@ -243,6 +507,12 @@ pub fn delete_wallpaper(
     }
     delete_matching_cache_files(cache_dir, &safe_file_stem(wallpaper_id))?;
 
+    connection
+        .execute(
+            "DELETE FROM playlist_wallpapers WHERE wallpaper_id = ?1",
+            params![wallpaper_id],
+        )
+        .map_err(|error| format!("Could not delete playlist wallpaper metadata: {error}"))?;
     connection
         .execute(
             "DELETE FROM wallpapers WHERE id = ?1",
@@ -458,6 +728,240 @@ pub fn clear_cache(cache_dir: &Path, db_path: &Path) -> Result<(), String> {
     Ok(())
 }
 
+pub fn import_local_folder(
+    db_path: &Path,
+    cache_dir: &Path,
+    folder: &Path,
+) -> Result<ImportResult, String> {
+    if !folder.is_dir() {
+        return Err(format!("Folder does not exist: {}", folder.display()));
+    }
+
+    init_database(db_path)?;
+    let full_dir = cache_dir.join("full");
+    fs::create_dir_all(&full_dir)
+        .map_err(|error| format!("Could not create wallpaper import cache: {error}"))?;
+
+    let mut image_paths = Vec::new();
+    collect_importable_images(folder, &mut image_paths)?;
+
+    let mut result = ImportResult {
+        imported: 0,
+        skipped: 0,
+    };
+
+    for source_path in image_paths {
+        match import_local_image(db_path, &full_dir, &source_path) {
+            Ok(()) => result.imported += 1,
+            Err(_) => result.skipped += 1,
+        }
+    }
+
+    Ok(result)
+}
+
+fn collect_importable_images(folder: &Path, paths: &mut Vec<PathBuf>) -> Result<(), String> {
+    for entry in
+        fs::read_dir(folder).map_err(|error| format!("Could not read import folder: {error}"))?
+    {
+        let path = entry
+            .map_err(|error| format!("Could not read import folder entry: {error}"))?
+            .path();
+        if path.is_dir() {
+            collect_importable_images(&path, paths)?;
+        } else if is_supported_image_path(&path) {
+            paths.push(path);
+        }
+    }
+    Ok(())
+}
+
+fn import_local_image(db_path: &Path, full_dir: &Path, source_path: &Path) -> Result<(), String> {
+    let image = image::ImageReader::open(source_path)
+        .map_err(|error| format!("Could not open local image: {error}"))?
+        .with_guessed_format()
+        .map_err(|error| format!("Could not read local image format: {error}"))?
+        .decode()
+        .map_err(|error| format!("Could not decode local image: {error}"))?;
+    let (width, height) = image.dimensions();
+    let extension = source_path
+        .extension()
+        .and_then(|value| value.to_str())
+        .map(|value| value.to_ascii_lowercase())
+        .filter(|value| matches!(value.as_str(), "jpg" | "jpeg" | "png" | "webp"))
+        .unwrap_or_else(|| "jpg".into());
+    let id = local_wallpaper_id(source_path);
+    let target = full_dir.join(format!("{}.{}", safe_file_stem(&id), extension));
+    if !target.exists() {
+        fs::copy(source_path, &target)
+            .map_err(|error| format!("Could not copy local wallpaper into cache: {error}"))?;
+    }
+
+    let wallpaper = Wallpaper {
+        id,
+        source: "local".into(),
+        thumb_url: target.to_string_lossy().to_string(),
+        full_url: target.to_string_lossy().to_string(),
+        photographer: "Local folder".into(),
+        width,
+        height,
+        query_used: Some("local import".into()),
+        mood: None,
+        local_path: Some(target.to_string_lossy().to_string()),
+        is_favorite: false,
+    };
+    upsert_downloaded_wallpaper(db_path, &wallpaper, &target)
+}
+
+fn local_wallpaper_id(path: &Path) -> String {
+    let mut hasher = DefaultHasher::new();
+    path.to_string_lossy().hash(&mut hasher);
+    let stem = path
+        .file_stem()
+        .map(|value| value.to_string_lossy())
+        .unwrap_or_else(|| "wallpaper".into());
+    format!("local-{}-{:x}", safe_file_stem(&stem), hasher.finish())
+}
+
+fn is_supported_image_path(path: &Path) -> bool {
+    path.extension()
+        .and_then(|value| value.to_str())
+        .map(|value| {
+            matches!(
+                value.to_ascii_lowercase().as_str(),
+                "jpg" | "jpeg" | "png" | "webp"
+            )
+        })
+        .unwrap_or(false)
+}
+
+pub fn last_used_wallpaper(db_path: &Path) -> Result<Option<Wallpaper>, String> {
+    init_database(db_path)?;
+    let wallpapers = query_wallpapers(
+        db_path,
+        "WHERE local_path IS NOT NULL ORDER BY last_used DESC, created_at DESC LIMIT 1",
+    )?;
+    Ok(wallpapers.into_iter().next())
+}
+
+pub fn all_wallpapers(db_path: &Path) -> Result<Vec<Wallpaper>, String> {
+    init_database(db_path)?;
+    query_wallpapers(db_path, "ORDER BY created_at DESC")
+}
+
+pub fn restore_wallpaper_metadata(db_path: &Path, wallpapers: &[Wallpaper]) -> Result<(), String> {
+    init_database(db_path)?;
+    for wallpaper in wallpapers {
+        upsert_wallpaper(
+            db_path,
+            wallpaper,
+            wallpaper.local_path.as_deref().map(Path::new),
+            wallpaper.is_favorite,
+            wallpaper.local_path.is_some(),
+        )?;
+    }
+    Ok(())
+}
+
+pub fn restore_playlists(db_path: &Path, playlists: &[WallpaperPlaylist]) -> Result<(), String> {
+    init_database(db_path)?;
+    let connection = Connection::open(db_path)
+        .map_err(|error| format!("Could not open wallpaper database: {error}"))?;
+    for playlist in playlists {
+        connection
+            .execute(
+                r#"
+                INSERT INTO playlists (id, name, created_at)
+                VALUES (?1, ?2, ?3)
+                ON CONFLICT(id) DO UPDATE SET name = excluded.name
+                "#,
+                params![playlist.id, playlist.name, unix_timestamp_string()],
+            )
+            .map_err(|error| format!("Could not restore playlist: {error}"))?;
+        for wallpaper in &playlist.wallpapers {
+            upsert_wallpaper(
+                db_path,
+                wallpaper,
+                wallpaper.local_path.as_deref().map(Path::new),
+                wallpaper.is_favorite,
+                wallpaper.local_path.is_some(),
+            )?;
+            connection
+                .execute(
+                    r#"
+                    INSERT INTO playlist_wallpapers (playlist_id, wallpaper_id, created_at)
+                    VALUES (?1, ?2, ?3)
+                    ON CONFLICT(playlist_id, wallpaper_id) DO NOTHING
+                    "#,
+                    params![playlist.id, wallpaper.id, unix_timestamp_string()],
+                )
+                .map_err(|error| format!("Could not restore playlist wallpaper: {error}"))?;
+        }
+    }
+    Ok(())
+}
+
+pub fn cleanup_old_downloads(
+    db_path: &Path,
+    cache_dir: &Path,
+    days: u64,
+    keep_favorites: bool,
+) -> Result<u64, String> {
+    if days == 0 {
+        return Ok(0);
+    }
+
+    init_database(db_path)?;
+    let cutoff = unix_timestamp_seconds().saturating_sub(days.saturating_mul(86_400));
+    let connection = Connection::open(db_path)
+        .map_err(|error| format!("Could not open wallpaper database: {error}"))?;
+    let sql = if keep_favorites {
+        r#"
+        SELECT id, local_path
+        FROM wallpapers
+        WHERE local_path IS NOT NULL
+          AND is_favorite = 0
+          AND CAST(COALESCE(last_used, created_at, '0') AS INTEGER) < ?1
+        "#
+    } else {
+        r#"
+        SELECT id, local_path
+        FROM wallpapers
+        WHERE local_path IS NOT NULL
+          AND CAST(COALESCE(last_used, created_at, '0') AS INTEGER) < ?1
+        "#
+    };
+    let candidates = connection
+        .prepare(sql)
+        .and_then(|mut statement| {
+            statement
+                .query_map(params![cutoff.to_string()], |row| {
+                    Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+                })?
+                .collect::<Result<Vec<_>, _>>()
+        })
+        .map_err(|error| format!("Could not query auto-clean candidates: {error}"))?;
+
+    let mut removed = 0_u64;
+    for (id, local_path) in candidates {
+        let path = PathBuf::from(local_path);
+        if path.exists() {
+            fs::remove_file(&path)
+                .map_err(|error| format!("Could not delete old wallpaper: {error}"))?;
+        }
+        delete_matching_cache_files(cache_dir, &safe_file_stem(&id))?;
+        connection
+            .execute(
+                "UPDATE wallpapers SET local_path = NULL WHERE id = ?1",
+                params![id],
+            )
+            .map_err(|error| format!("Could not update auto-clean metadata: {error}"))?;
+        removed += 1;
+    }
+
+    Ok(removed)
+}
+
 fn clear_cache_files(cache_dir: &Path) -> Result<(), String> {
     if cache_dir.exists() {
         fs::remove_dir_all(cache_dir).map_err(|error| format!("Could not clear cache: {error}"))?;
@@ -603,10 +1107,14 @@ fn extension_from_content_type(value: &str) -> Option<&'static str> {
 }
 
 fn unix_timestamp_string() -> String {
+    unix_timestamp_seconds().to_string()
+}
+
+fn unix_timestamp_seconds() -> u64 {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
-        .map(|duration| duration.as_secs().to_string())
-        .unwrap_or_else(|_| "0".into())
+        .map(|duration| duration.as_secs())
+        .unwrap_or_default()
 }
 
 #[cfg(test)]
@@ -838,5 +1346,148 @@ mod tests {
 
         let _ = std::fs::remove_file(db_path);
         let _ = std::fs::remove_file(local_path);
+    }
+
+    #[test]
+    fn playlist_lifecycle_tracks_wallpapers_and_removals() {
+        let db_path = temp_path("playlist", "sqlite3");
+        init_database(&db_path).expect("database should initialize");
+
+        let library = create_playlist(&db_path, "Work walls").expect("playlist should create");
+        let playlist_id = library.playlists[0].id.clone();
+        let library = add_wallpaper_to_playlist(&db_path, &playlist_id, &sample_wallpaper())
+            .expect("wallpaper should be added");
+
+        assert_eq!(library.playlists[0].wallpapers.len(), 1);
+        assert_eq!(
+            random_playlist_wallpaper(&db_path, &playlist_id)
+                .expect("random playlist wallpaper should query")
+                .map(|wallpaper| wallpaper.id),
+            Some("pexels-42".into())
+        );
+
+        let library = remove_wallpaper_from_playlist(&db_path, &playlist_id, "pexels-42")
+            .expect("wallpaper should be removed");
+        assert!(library.playlists[0].wallpapers.is_empty());
+
+        let library = delete_playlist(&db_path, &playlist_id).expect("playlist should delete");
+        assert!(library.playlists.is_empty());
+
+        let _ = std::fs::remove_file(db_path);
+    }
+
+    #[test]
+    fn unfavorite_keeps_wallpaper_metadata_when_it_is_in_playlist() {
+        let db_path = temp_path("playlist-unfavorite", "sqlite3");
+        init_database(&db_path).expect("database should initialize");
+        let wallpaper = sample_wallpaper();
+        let library = create_playlist(&db_path, "Keep").expect("playlist should create");
+        let playlist_id = library.playlists[0].id.clone();
+
+        save_favorite(&db_path, &wallpaper).expect("favorite should save");
+        add_wallpaper_to_playlist(&db_path, &playlist_id, &wallpaper)
+            .expect("wallpaper should be added to playlist");
+        set_favorite(&db_path, &wallpaper, false).expect("favorite should unset");
+        let library = list_library(&db_path).expect("library should list");
+
+        assert!(library.favorites.is_empty());
+        assert_eq!(library.playlists[0].wallpapers.len(), 1);
+        assert!(!library.playlists[0].wallpapers[0].is_favorite);
+
+        let _ = std::fs::remove_file(db_path);
+    }
+
+    #[test]
+    fn clear_library_removes_playlists_too() {
+        let db_path = temp_path("clear-playlists", "sqlite3");
+        let cache_dir = temp_path("clear-playlists-cache", "dir");
+        init_database(&db_path).expect("database should initialize");
+        let library = create_playlist(&db_path, "Seasonal").expect("playlist should create");
+        let playlist_id = library.playlists[0].id.clone();
+        add_wallpaper_to_playlist(&db_path, &playlist_id, &sample_wallpaper())
+            .expect("wallpaper should be added");
+
+        clear_library(&db_path, &cache_dir).expect("library should clear");
+        let library = list_library(&db_path).expect("library should list");
+
+        assert!(library.playlists.is_empty());
+        assert!(library.favorites.is_empty());
+        assert!(library.downloaded.is_empty());
+
+        let _ = std::fs::remove_file(db_path);
+        let _ = std::fs::remove_dir_all(cache_dir);
+    }
+
+    #[test]
+    fn imports_local_folder_images_into_downloaded_library() {
+        let db_path = temp_path("import-local", "sqlite3");
+        let cache_dir = temp_path("import-local-cache", "dir");
+        let source_dir = temp_path("import-local-source", "dir");
+        std::fs::create_dir_all(&source_dir).expect("source dir should exist");
+        let source_image = source_dir.join("wall.png");
+        image::RgbImage::new(40, 20)
+            .save(&source_image)
+            .expect("source image should save");
+
+        let result =
+            import_local_folder(&db_path, &cache_dir, &source_dir).expect("folder should import");
+        let library = list_library(&db_path).expect("library should list");
+        let local_path = library.downloaded[0]
+            .local_path
+            .as_ref()
+            .expect("local path should be stored");
+
+        assert_eq!(result.imported, 1);
+        assert_eq!(result.skipped, 0);
+        assert_eq!(library.downloaded.len(), 1);
+        assert_eq!(library.downloaded[0].source, "local");
+        assert_eq!(library.downloaded[0].width, 40);
+        assert_eq!(library.downloaded[0].height, 20);
+        assert!(Path::new(local_path).exists());
+
+        let _ = std::fs::remove_file(db_path);
+        let _ = std::fs::remove_dir_all(cache_dir);
+        let _ = std::fs::remove_dir_all(source_dir);
+    }
+
+    #[test]
+    fn auto_clean_removes_old_non_favorite_downloads_only() {
+        let db_path = temp_path("auto-clean", "sqlite3");
+        let cache_dir = temp_path("auto-clean-cache", "dir");
+        let full_dir = cache_dir.join("full");
+        std::fs::create_dir_all(&full_dir).expect("cache dir should exist");
+        let old_path = full_dir.join("old.jpg");
+        let favorite_path = full_dir.join("favorite.jpg");
+        std::fs::write(&old_path, b"old").expect("old file should exist");
+        std::fs::write(&favorite_path, b"favorite").expect("favorite file should exist");
+        init_database(&db_path).expect("database should initialize");
+
+        let mut old = sample_wallpaper();
+        old.id = "old".into();
+        let mut favorite = sample_wallpaper();
+        favorite.id = "favorite".into();
+        record_wallpaper_used(&db_path, &old, &old_path).expect("old should record");
+        record_wallpaper_used(&db_path, &favorite, &favorite_path).expect("favorite should record");
+        save_favorite(&db_path, &favorite).expect("favorite should save");
+        let connection = Connection::open(&db_path).expect("database should open");
+        connection
+            .execute(
+                "UPDATE wallpapers SET last_used = '1', created_at = '1'",
+                [],
+            )
+            .expect("timestamps should update");
+
+        let removed =
+            cleanup_old_downloads(&db_path, &cache_dir, 1, true).expect("auto-clean should run");
+        let library = list_library(&db_path).expect("library should list");
+
+        assert_eq!(removed, 1);
+        assert!(!old_path.exists());
+        assert!(favorite_path.exists());
+        assert_eq!(library.downloaded.len(), 1);
+        assert_eq!(library.downloaded[0].id, "favorite");
+
+        let _ = std::fs::remove_file(db_path);
+        let _ = std::fs::remove_dir_all(cache_dir);
     }
 }

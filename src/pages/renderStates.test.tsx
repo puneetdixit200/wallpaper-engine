@@ -32,14 +32,15 @@ const noop = () => undefined;
 const asyncNoop = async () => undefined;
 
 function appValue(overrides: Partial<AppStateValue> = {}): AppStateValue {
-  const favoriteIds = new Set(
-    (overrides.library ?? initialAppState.library).favorites.map(
-      (item) => item.id,
-    ),
-  );
+  const library = {
+    ...initialAppState.library,
+    ...overrides.library,
+  };
+  const favoriteIds = new Set(library.favorites.map((item) => item.id));
 
   return {
     ...initialAppState,
+    library,
     hasAnyKey: false,
     favoriteIds,
     actions: {
@@ -48,7 +49,20 @@ function appValue(overrides: Partial<AppStateValue> = {}): AppStateValue {
       searchWallpapers: asyncNoop,
       changeSource: asyncNoop,
       setWallpaper: asyncNoop,
+      setWallpaperWithLayout: asyncNoop,
+      setLockScreenWallpaper: asyncNoop,
+      assessWallpaperQuality: async () => null,
       saveFavorite: asyncNoop,
+      createPlaylist: asyncNoop,
+      deletePlaylist: asyncNoop,
+      addWallpaperToPlaylist: asyncNoop,
+      removeWallpaperFromPlaylist: asyncNoop,
+      importLocalFolder: async () => null,
+      exportBackup: async () => null,
+      importBackup: asyncNoop,
+      runAutoCleanup: asyncNoop,
+      applyNextWallpaper: asyncNoop,
+      toggleAutoChangePause: async () => null,
       applyRandomWallpaper: asyncNoop,
       applyMood: asyncNoop,
       applyTopic: asyncNoop,
@@ -111,7 +125,7 @@ describe("page render states", () => {
     const html = renderWithState(
       <WallCard wallpaper={saved} />,
       appValue({
-        library: { favorites: [saved], downloaded: [] },
+        library: { favorites: [saved], downloaded: [], playlists: [] },
         favoriteIds: new Set(["saved"]),
       }),
     );
@@ -125,7 +139,7 @@ describe("page render states", () => {
     const html = renderWithState(
       <WallCard wallpaper={stale} />,
       appValue({
-        library: { favorites: [], downloaded: [] },
+        library: { favorites: [], downloaded: [], playlists: [] },
         favoriteIds: new Set(),
       }),
     );
@@ -139,7 +153,7 @@ describe("page render states", () => {
     const libraryHtml = renderWithState(
       <WallCard wallpaper={saved} canDelete />,
       appValue({
-        library: { favorites: [saved], downloaded: [] },
+        library: { favorites: [saved], downloaded: [], playlists: [] },
         favoriteIds: new Set(["saved"]),
       }),
     );
@@ -156,5 +170,32 @@ describe("page render states", () => {
     expect(html).toContain("Change every");
     expect(html).toContain("Keep changing after close");
     expect(html).toContain("Start at login");
+  });
+
+  it("shows playlist, import, and backup tools in the library", () => {
+    const html = renderWithState(<LibraryPage />, appValue());
+
+    expect(html).toContain("Playlists");
+    expect(html).toContain("Local folder path");
+    expect(html).toContain("Export backup path");
+  });
+
+  it("shows quality guard and hotkey controls in settings", () => {
+    const html = renderWithState(<SettingsPage />, appValue());
+
+    expect(html).toContain("Quality guard");
+    expect(html).toContain("Enable global hotkeys");
+    expect(html).toContain("Next wallpaper hotkey");
+    expect(html).toContain("Pause timer hotkey");
+    expect(html).toContain("Favorite current hotkey");
+    expect(html).toContain("Run auto-clean");
+  });
+
+  it("shows the GitHub credit in settings", () => {
+    const html = renderWithState(<SettingsPage />, appValue());
+
+    expect(html).toContain("Made with");
+    expect(html).toContain("https://github.com/puneetdixit200");
+    expect(html).toContain("puneetdixit");
   });
 });

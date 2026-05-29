@@ -1,10 +1,11 @@
 import { useEffect, useRef } from "react";
-import { Search as SearchIcon } from "lucide-react";
+import { Filter, Search as SearchIcon } from "lucide-react";
 import { useAppState } from "../appState";
 import { EmptyState } from "../components/EmptyState";
 import { WallCard } from "../components/WallCard";
 import { WallGridSkeleton } from "../components/WallGridSkeleton";
-import { ApiSource } from "../types";
+import { buildProviderQuery, filterWallpapers } from "../searchFilters";
+import { ApiSource, SearchOrientationFilter } from "../types";
 
 const sourceOptions: Array<{ label: string; value: ApiSource }> = [
   { label: "all", value: "all" },
@@ -17,20 +18,35 @@ const sourceOptions: Array<{ label: string; value: ApiSource }> = [
   { label: "artStation", value: "artStation" },
 ];
 
+const orientationOptions: Array<{
+  label: string;
+  value: SearchOrientationFilter;
+}> = [
+  { label: "Any", value: "any" },
+  { label: "Landscape", value: "landscape" },
+  { label: "Portrait", value: "portrait" },
+  { label: "Square", value: "square" },
+];
+
 export function SearchPage() {
-  const { busy, page, query, results, source, actions } = useAppState();
+  const { busy, page, query, results, settings, source, actions } =
+    useAppState();
   const sentinelRef = useRef<HTMLDivElement | null>(null);
   const requestedPageRef = useRef(page);
-  const hasResults = results.length > 0;
+  const filters = settings.searchFilters;
+  const filteredResults = filterWallpapers(results, filters);
+  const hasRawResults = results.length > 0;
+  const hasResults = filteredResults.length > 0;
   const isSearchLoading = busy === "search";
+  const providerQuery = buildProviderQuery(query, filters);
 
   useEffect(() => {
     requestedPageRef.current = page;
-  }, [page, query, source]);
+  }, [filters, page, query, source]);
 
   useEffect(() => {
     if (
-      !hasResults ||
+      !hasRawResults ||
       isSearchLoading ||
       typeof IntersectionObserver === "undefined"
     ) {
@@ -54,13 +70,23 @@ export function SearchPage() {
         }
 
         requestedPageRef.current = nextPage;
-        void actions.searchWallpapers(nextPage);
+        void actions.searchWallpapers(nextPage, providerQuery, source);
       },
       { rootMargin: "360px 0px" },
     );
     observer.observe(node);
     return () => observer.disconnect();
-  }, [actions, hasResults, isSearchLoading, page]);
+  }, [actions, hasRawResults, isSearchLoading, page, providerQuery, source]);
+
+  function updateFilters(nextFilters: Partial<typeof filters>) {
+    void actions.saveSettings({
+      ...settings,
+      searchFilters: {
+        ...filters,
+        ...nextFilters,
+      },
+    });
+  }
 
   return (
     <div className="view-stack">
@@ -87,7 +113,7 @@ export function SearchPage() {
         className="search-bar"
         onSubmit={(event) => {
           event.preventDefault();
-          void actions.searchWallpapers(1);
+          void actions.searchWallpapers(1, providerQuery, source);
         }}
       >
         <SearchIcon size={19} aria-hidden="true" />
@@ -101,25 +127,96 @@ export function SearchPage() {
         </button>
       </form>
 
+      <section aria-label="Search filters" className="filter-panel">
+        <div className="filter-heading">
+          <Filter size={18} aria-hidden="true" />
+          <span>Provider filters</span>
+        </div>
+        <label>
+          <span>Orientation</span>
+          <select
+            onChange={(event) =>
+              updateFilters({
+                orientation: event.currentTarget
+                  .value as SearchOrientationFilter,
+              })
+            }
+            value={filters.orientation}
+          >
+            {orientationOptions.map((option) => (
+              <option key={option.value} value={option.value}>
+                {option.label}
+              </option>
+            ))}
+          </select>
+        </label>
+        <label>
+          <span>Minimum width</span>
+          <input
+            min={0}
+            max={15360}
+            onChange={(event) =>
+              updateFilters({
+                minWidth: Number.parseInt(event.currentTarget.value, 10) || 0,
+              })
+            }
+            step={100}
+            type="number"
+            value={filters.minWidth}
+          />
+        </label>
+        <label>
+          <span>Minimum height</span>
+          <input
+            min={0}
+            max={8640}
+            onChange={(event) =>
+              updateFilters({
+                minHeight: Number.parseInt(event.currentTarget.value, 10) || 0,
+              })
+            }
+            step={100}
+            type="number"
+            value={filters.minHeight}
+          />
+        </label>
+        <label>
+          <span>Color hint</span>
+          <input
+            onChange={(event) => updateFilters({ color: event.currentTarget.value })}
+            placeholder="blue, black, pastel..."
+            value={filters.color}
+          />
+        </label>
+      </section>
+
       <section className="wall-grid">
-        {!hasResults && !isSearchLoading ? (
+        {!hasRawResults && !isSearchLoading ? (
           <EmptyState
             title="No results yet"
             detail="Results will appear here."
           />
         ) : null}
-        {results.map((wallpaper) => (
+        {hasRawResults && !hasResults && !isSearchLoading ? (
+          <EmptyState
+            title="No results match filters"
+            detail="Try lowering the minimum size or changing orientation."
+          />
+        ) : null}
+        {filteredResults.map((wallpaper) => (
           <WallCard key={wallpaper.id} wallpaper={wallpaper} />
         ))}
-        {isSearchLoading ? <WallGridSkeleton count={hasResults ? 3 : 6} /> : null}
+        {isSearchLoading ? (
+          <WallGridSkeleton count={hasRawResults ? 3 : 6} />
+        ) : null}
       </section>
 
       <div className="load-row" ref={sentinelRef}>
         <span>
-          {hasResults
+          {hasRawResults
             ? isSearchLoading
               ? "Loading more wallpapers"
-              : `Page ${page} loaded`
+              : `${filteredResults.length} shown from page ${page}`
             : "No results loaded"}
         </span>
       </div>

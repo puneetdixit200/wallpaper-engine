@@ -45,6 +45,47 @@ pub enum WallpaperLayoutPreference {
     Span,
 }
 
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub enum QualityGuardMode {
+    Off,
+    Warn,
+    Skip,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub enum SearchOrientationFilter {
+    Any,
+    Landscape,
+    Portrait,
+    Square,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct SearchFilters {
+    #[serde(default)]
+    pub orientation: SearchOrientationFilter,
+    #[serde(default)]
+    pub min_width: u32,
+    #[serde(default)]
+    pub min_height: u32,
+    #[serde(default)]
+    pub color: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct HotkeySettings {
+    #[serde(default = "default_next_wallpaper_hotkey")]
+    pub next_wallpaper: String,
+    #[serde(default = "default_pause_rotation_hotkey")]
+    pub pause_rotation: String,
+    #[serde(default = "default_favorite_current_hotkey")]
+    pub favorite_current: String,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub struct AppSettings {
@@ -62,6 +103,28 @@ pub struct AppSettings {
     pub run_in_background: bool,
     #[serde(default)]
     pub launch_at_startup: bool,
+    #[serde(default)]
+    pub apply_to_lock_screen: bool,
+    #[serde(default = "default_true")]
+    pub global_hotkeys_enabled: bool,
+    #[serde(default)]
+    pub quality_guard_mode: QualityGuardMode,
+    #[serde(default = "default_quality_min_width")]
+    pub quality_min_width: u32,
+    #[serde(default = "default_quality_min_height")]
+    pub quality_min_height: u32,
+    #[serde(default)]
+    pub allow_portrait_wallpapers: bool,
+    #[serde(default)]
+    pub search_filters: SearchFilters,
+    #[serde(default)]
+    pub active_playlist_id: Option<String>,
+    #[serde(default)]
+    pub hotkeys: HotkeySettings,
+    #[serde(default)]
+    pub auto_clean_days: u64,
+    #[serde(default = "default_true")]
+    pub auto_clean_keep_favorites: bool,
 }
 
 impl Default for ApiKeys {
@@ -88,6 +151,50 @@ impl Default for AppSettings {
             wallpaper_layout: WallpaperLayoutPreference::Fit,
             run_in_background: false,
             launch_at_startup: false,
+            apply_to_lock_screen: false,
+            global_hotkeys_enabled: true,
+            quality_guard_mode: QualityGuardMode::Warn,
+            quality_min_width: default_quality_min_width(),
+            quality_min_height: default_quality_min_height(),
+            allow_portrait_wallpapers: false,
+            search_filters: SearchFilters::default(),
+            active_playlist_id: None,
+            hotkeys: HotkeySettings::default(),
+            auto_clean_days: 0,
+            auto_clean_keep_favorites: true,
+        }
+    }
+}
+
+impl Default for QualityGuardMode {
+    fn default() -> Self {
+        Self::Warn
+    }
+}
+
+impl Default for SearchOrientationFilter {
+    fn default() -> Self {
+        Self::Any
+    }
+}
+
+impl Default for SearchFilters {
+    fn default() -> Self {
+        Self {
+            orientation: SearchOrientationFilter::Any,
+            min_width: 0,
+            min_height: 0,
+            color: String::new(),
+        }
+    }
+}
+
+impl Default for HotkeySettings {
+    fn default() -> Self {
+        Self {
+            next_wallpaper: default_next_wallpaper_hotkey(),
+            pause_rotation: default_pause_rotation_hotkey(),
+            favorite_current: default_favorite_current_hotkey(),
         }
     }
 }
@@ -123,6 +230,24 @@ impl AppSettings {
         self.api_keys.deviantart = self.api_keys.deviantart.trim().to_string();
         self.cache_limit_mb = self.cache_limit_mb.clamp(128, 10_240);
         self.auto_change_minutes = self.auto_change_minutes.min(1_440);
+        self.quality_min_width = self.quality_min_width.clamp(320, 15_360);
+        self.quality_min_height = self.quality_min_height.clamp(240, 8_640);
+        self.search_filters.min_width = self.search_filters.min_width.min(15_360);
+        self.search_filters.min_height = self.search_filters.min_height.min(8_640);
+        self.search_filters.color = self.search_filters.color.trim().to_string();
+        self.hotkeys.next_wallpaper = normalize_hotkey(
+            &self.hotkeys.next_wallpaper,
+            &default_next_wallpaper_hotkey(),
+        );
+        self.hotkeys.pause_rotation = normalize_hotkey(
+            &self.hotkeys.pause_rotation,
+            &default_pause_rotation_hotkey(),
+        );
+        self.hotkeys.favorite_current = normalize_hotkey(
+            &self.hotkeys.favorite_current,
+            &default_favorite_current_hotkey(),
+        );
+        self.auto_clean_days = self.auto_clean_days.min(365);
         if self.auto_change_minutes > 0 {
             self.launch_at_startup = true;
         }
@@ -130,6 +255,39 @@ impl AppSettings {
             self.run_in_background = true;
         }
         self
+    }
+}
+
+fn default_quality_min_width() -> u32 {
+    1920
+}
+
+fn default_quality_min_height() -> u32 {
+    1080
+}
+
+fn default_true() -> bool {
+    true
+}
+
+fn default_next_wallpaper_hotkey() -> String {
+    "CommandOrControl+Alt+N".into()
+}
+
+fn default_pause_rotation_hotkey() -> String {
+    "CommandOrControl+Alt+P".into()
+}
+
+fn default_favorite_current_hotkey() -> String {
+    "CommandOrControl+Alt+F".into()
+}
+
+fn normalize_hotkey(value: &str, fallback: &str) -> String {
+    let trimmed = value.trim();
+    if trimmed.is_empty() {
+        fallback.to_string()
+    } else {
+        trimmed.to_string()
     }
 }
 
@@ -312,5 +470,78 @@ mod tests {
             ResolutionPreference::FourK.minimum_dimensions(),
             (3840, 2160)
         );
+    }
+
+    #[test]
+    fn default_settings_enable_new_desktop_controls() {
+        let settings = AppSettings::default();
+
+        assert_eq!(settings.quality_guard_mode, QualityGuardMode::Warn);
+        assert_eq!(settings.quality_min_width, 1920);
+        assert_eq!(settings.quality_min_height, 1080);
+        assert!(settings.global_hotkeys_enabled);
+        assert!(!settings.apply_to_lock_screen);
+        assert!(settings.auto_clean_keep_favorites);
+        assert_eq!(
+            settings.search_filters.orientation,
+            SearchOrientationFilter::Any
+        );
+        assert_eq!(settings.hotkeys.next_wallpaper, "CommandOrControl+Alt+N");
+    }
+
+    #[test]
+    fn new_settings_fields_are_sanitized() {
+        let settings = AppSettings {
+            quality_min_width: 20,
+            quality_min_height: 20_000,
+            search_filters: SearchFilters {
+                orientation: SearchOrientationFilter::Landscape,
+                min_width: 90_000,
+                min_height: 90_000,
+                color: "  blue  ".into(),
+            },
+            hotkeys: HotkeySettings {
+                next_wallpaper: " ".into(),
+                pause_rotation: " Control+Shift+P ".into(),
+                favorite_current: String::new(),
+            },
+            auto_clean_days: 800,
+            ..AppSettings::default()
+        }
+        .sanitized();
+
+        assert_eq!(settings.quality_min_width, 320);
+        assert_eq!(settings.quality_min_height, 8_640);
+        assert_eq!(settings.search_filters.min_width, 15_360);
+        assert_eq!(settings.search_filters.min_height, 8_640);
+        assert_eq!(settings.search_filters.color, "blue");
+        assert_eq!(settings.hotkeys.next_wallpaper, "CommandOrControl+Alt+N");
+        assert_eq!(settings.hotkeys.pause_rotation, "Control+Shift+P");
+        assert_eq!(settings.hotkeys.favorite_current, "CommandOrControl+Alt+F");
+        assert_eq!(settings.auto_clean_days, 365);
+    }
+
+    #[test]
+    fn older_settings_files_get_defaults_for_new_fields() {
+        let path = temp_settings_path("legacy-fields");
+        fs::write(
+            &path,
+            r#"{
+              "apiKeys": {},
+              "autoChangeMinutes": 0,
+              "resolution": "auto",
+              "cacheLimitMb": 1024
+            }"#,
+        )
+        .expect("legacy settings should write");
+
+        let loaded = load_settings_from_path(&path).expect("legacy settings should load");
+
+        assert_eq!(loaded.quality_guard_mode, QualityGuardMode::Warn);
+        assert!(loaded.global_hotkeys_enabled);
+        assert_eq!(loaded.search_filters, SearchFilters::default());
+        assert_eq!(loaded.hotkeys, HotkeySettings::default());
+
+        let _ = fs::remove_file(path);
     }
 }

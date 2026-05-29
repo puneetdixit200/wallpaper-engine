@@ -26,6 +26,17 @@ pub fn set_desktop_wallpaper(path: &Path, layout: WallpaperLayoutPreference) -> 
     set_platform_wallpaper(path, layout)
 }
 
+pub fn set_lock_screen_wallpaper(
+    path: &Path,
+    layout: WallpaperLayoutPreference,
+) -> Result<(), String> {
+    if !path.exists() {
+        return Err(format!("Wallpaper file does not exist: {}", path.display()));
+    }
+
+    set_platform_lock_screen_wallpaper(path, layout)
+}
+
 pub fn restore_locked_wallpaper_if_needed<F>(
     lock: &WallpaperLock,
     current_wallpaper: Option<PathBuf>,
@@ -341,6 +352,63 @@ fn set_platform_wallpaper(_path: &Path, _layout: WallpaperLayoutPreference) -> R
     Err("Wallpaper changes are not supported on this operating system.".into())
 }
 
+#[cfg(target_os = "linux")]
+fn set_platform_lock_screen_wallpaper(
+    path: &Path,
+    layout: WallpaperLayoutPreference,
+) -> Result<(), String> {
+    let mut failures = Vec::new();
+    let mut attempted = false;
+
+    for command in linux_lock_screen_commands(path, layout) {
+        if !command_exists(&command.program) {
+            continue;
+        }
+
+        attempted = true;
+        match Command::new(&command.program).args(&command.args).status() {
+            Ok(status) if status.success() => {}
+            Ok(status) => failures.push(format!("{} exited with {status}", command.program)),
+            Err(error) => failures.push(format!("{} failed: {error}", command.program)),
+        }
+    }
+
+    if !attempted {
+        Err("No supported Linux lock-screen wallpaper tool was found.".into())
+    } else if failures.is_empty() {
+        Ok(())
+    } else {
+        Err(failures.join("; "))
+    }
+}
+
+#[cfg(target_os = "windows")]
+fn set_platform_lock_screen_wallpaper(
+    _path: &Path,
+    _layout: WallpaperLayoutPreference,
+) -> Result<(), String> {
+    Err(
+        "Windows does not allow a reliable unsigned desktop app lock-screen wallpaper update."
+            .into(),
+    )
+}
+
+#[cfg(target_os = "macos")]
+fn set_platform_lock_screen_wallpaper(
+    _path: &Path,
+    _layout: WallpaperLayoutPreference,
+) -> Result<(), String> {
+    Err("macOS does not expose a separate lock-screen wallpaper API for this app.".into())
+}
+
+#[cfg(not(any(target_os = "windows", target_os = "macos", target_os = "linux")))]
+fn set_platform_lock_screen_wallpaper(
+    _path: &Path,
+    _layout: WallpaperLayoutPreference,
+) -> Result<(), String> {
+    Err("Lock-screen wallpaper changes are not supported on this operating system.".into())
+}
+
 pub fn linux_wallpaper_commands(
     path: &Path,
     layout: WallpaperLayoutPreference,
@@ -405,6 +473,33 @@ pub fn linux_wallpaper_commands(
         WallpaperCommand {
             program: "xwallpaper".into(),
             args: vec![xwallpaper_arg.into(), path_text],
+        },
+    ]
+}
+
+pub fn linux_lock_screen_commands(
+    path: &Path,
+    layout: WallpaperLayoutPreference,
+) -> Vec<WallpaperCommand> {
+    let uri = file_uri(path);
+    vec![
+        WallpaperCommand {
+            program: "gsettings".into(),
+            args: vec![
+                "set".into(),
+                "org.gnome.desktop.screensaver".into(),
+                "picture-options".into(),
+                linux_picture_option(layout).into(),
+            ],
+        },
+        WallpaperCommand {
+            program: "gsettings".into(),
+            args: vec![
+                "set".into(),
+                "org.gnome.desktop.screensaver".into(),
+                "picture-uri".into(),
+                uri,
+            ],
         },
     ]
 }
@@ -808,6 +903,26 @@ mod tests {
             linux_picture_option(WallpaperLayoutPreference::Span),
             "spanned"
         );
+    }
+
+    #[test]
+    fn linux_lock_screen_commands_target_gnome_screensaver() {
+        let commands = linux_lock_screen_commands(
+            Path::new("/home/me/Pictures/lock wall.jpg"),
+            WallpaperLayoutPreference::Center,
+        );
+
+        assert!(commands.iter().any(|command| command.program == "gsettings"
+            && command
+                .args
+                .contains(&"org.gnome.desktop.screensaver".to_string())
+            && command.args.contains(&"picture-uri".to_string())
+            && command
+                .args
+                .contains(&"file:///home/me/Pictures/lock%20wall.jpg".to_string())));
+        assert!(commands.iter().any(|command| command.program == "gsettings"
+            && command.args.contains(&"picture-options".to_string())
+            && command.args.contains(&"centered".to_string())));
     }
 
     #[test]

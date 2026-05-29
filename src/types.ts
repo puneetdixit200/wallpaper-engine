@@ -17,6 +17,8 @@ export type WallpaperLayoutPreference =
   | "tile"
   | "center"
   | "span";
+export type QualityGuardMode = "off" | "warn" | "skip";
+export type SearchOrientationFilter = "any" | "landscape" | "portrait" | "square";
 
 export type Mood =
   | "dark"
@@ -50,6 +52,17 @@ export interface AppSettings {
   wallpaperLayout: WallpaperLayoutPreference;
   runInBackground: boolean;
   launchAtStartup: boolean;
+  applyToLockScreen: boolean;
+  globalHotkeysEnabled: boolean;
+  qualityGuardMode: QualityGuardMode;
+  qualityMinWidth: number;
+  qualityMinHeight: number;
+  allowPortraitWallpapers: boolean;
+  searchFilters: SearchFilters;
+  activePlaylistId: string | null;
+  hotkeys: HotkeySettings;
+  autoCleanDays: number;
+  autoCleanKeepFavorites: boolean;
 }
 
 export interface Wallpaper {
@@ -66,14 +79,44 @@ export interface Wallpaper {
   isFavorite: boolean;
 }
 
+export interface WallpaperPlaylist {
+  id: string;
+  name: string;
+  wallpapers: Wallpaper[];
+}
+
 export interface Library {
   favorites: Wallpaper[];
   downloaded: Wallpaper[];
+  playlists: WallpaperPlaylist[];
 }
 
 export interface CacheStats {
   bytes: number;
   files: number;
+}
+
+export interface ImportResult {
+  imported: number;
+  skipped: number;
+}
+
+export interface WallpaperQualityReport {
+  ok: boolean;
+  warnings: string[];
+}
+
+export interface SearchFilters {
+  orientation: SearchOrientationFilter;
+  minWidth: number;
+  minHeight: number;
+  color: string;
+}
+
+export interface HotkeySettings {
+  nextWallpaper: string;
+  pauseRotation: string;
+  favoriteCurrent: string;
 }
 
 export const defaultSettings: AppSettings = {
@@ -92,6 +135,26 @@ export const defaultSettings: AppSettings = {
   wallpaperLayout: "fit",
   runInBackground: false,
   launchAtStartup: false,
+  applyToLockScreen: false,
+  globalHotkeysEnabled: true,
+  qualityGuardMode: "warn",
+  qualityMinWidth: 1920,
+  qualityMinHeight: 1080,
+  allowPortraitWallpapers: false,
+  searchFilters: {
+    orientation: "any",
+    minWidth: 0,
+    minHeight: 0,
+    color: "",
+  },
+  activePlaylistId: null,
+  hotkeys: {
+    nextWallpaper: "CommandOrControl+Alt+N",
+    pauseRotation: "CommandOrControl+Alt+P",
+    favoriteCurrent: "CommandOrControl+Alt+F",
+  },
+  autoCleanDays: 0,
+  autoCleanKeepFavorites: true,
 };
 
 export const moodQueries: Record<Mood, string[]> = {

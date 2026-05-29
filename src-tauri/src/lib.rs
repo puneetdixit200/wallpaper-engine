@@ -1,13 +1,15 @@
 pub mod api;
 pub mod cache;
 pub mod models;
+pub mod quality;
 pub mod settings;
 pub mod wallpaper;
 
-use models::{ApiSource, CacheStats, Library, Wallpaper};
+use models::{ApiSource, CacheStats, ImportResult, Library, Wallpaper, WallpaperQualityReport};
 use reqwest::Client;
+use serde::{Deserialize, Serialize};
 use settings::{
-    load_settings_from_path, save_settings_to_path, settings_path, AppSettings,
+    load_settings_from_path, save_settings_to_path, settings_path, AppSettings, HotkeySettings,
     WallpaperLayoutPreference,
 };
 use std::fs;
@@ -20,9 +22,17 @@ use tauri::menu::MenuBuilder;
 use tauri::tray::TrayIconBuilder;
 use tauri::{Manager, State};
 use tauri_plugin_autostart::ManagerExt;
+use tauri_plugin_global_shortcut::{GlobalShortcutExt, Shortcut, ShortcutState};
 
 const TRAY_OPEN_ID: &str = "open";
+const TRAY_NEXT_ID: &str = "next-wallpaper";
+const TRAY_PAUSE_ID: &str = "pause-rotation";
+const TRAY_FAVORITE_ID: &str = "favorite-current";
 const TRAY_QUIT_ID: &str = "quit";
+
+const HOTKEY_NEXT_ID: &str = "next-wallpaper";
+const HOTKEY_PAUSE_ID: &str = "pause-rotation";
+const HOTKEY_FAVORITE_ID: &str = "favorite-current";
 
 pub struct AppState {
     client: Client,
@@ -30,6 +40,7 @@ pub struct AppState {
     db_path: PathBuf,
     cache_dir: PathBuf,
     scheduler: Mutex<Option<JoinHandle<()>>>,
+    scheduler_paused: Arc<AtomicBool>,
     wallpaper_lock: Arc<Mutex<Option<wallpaper::WallpaperLock>>>,
     startup_wallpaper: Arc<Mutex<Option<wallpaper::WallpaperLock>>>,
     explicit_exit_requested: AtomicBool,
@@ -53,6 +64,14 @@ enum AppActivationMode {
     Background,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct BackupPayload {
+    exported_at: String,
+    settings: AppSettings,
+    library: Library,
+}
+
 #[tauri::command]
 fn get_settings(state: State<'_, AppState>) -> Result<AppSettings, String> {
     load_settings_from_path(&state.settings_path)
@@ -66,10 +85,14 @@ async fn save_settings(
     settings: AppSettings,
 ) -> Result<AppSettings, String> {
     let settings = settings.sanitized();
+    validate_hotkey_settings(&settings.hotkeys)?;
     sync_autostart(&app_handle, &settings)?;
     save_settings_to_path(&state.settings_path, &settings)
         .map_err(|error| format!("Could not save settings: {error}"))?;
     restart_scheduler(state.inner(), settings.auto_change_minutes).await?;
+    if let Err(error) = configure_global_hotkeys(&app_handle, &settings) {
+        eprintln!("Could not update global hotkeys: {error}");
+    }
     Ok(settings)
 }
 
@@ -123,13 +146,66 @@ async fn set_wallpaper(
         &state.cache_dir,
         &state.db_path,
         wallpaper,
+        &settings,
         settings.wallpaper_layout,
-        settings.resolution,
-        settings.cache_limit_mb,
     )
     .await?;
     remember_locked_wallpaper(&state.wallpaper_lock, &wallpaper, settings.wallpaper_layout).await;
     Ok(wallpaper)
+}
+
+#[tauri::command]
+async fn set_wallpaper_with_layout(
+    state: State<'_, AppState>,
+    wallpaper: Wallpaper,
+    layout: WallpaperLayoutPreference,
+) -> Result<Wallpaper, String> {
+    let settings = load_settings_from_path(&state.settings_path)
+        .map_err(|error| format!("Could not load settings: {error}"))?;
+    let wallpaper = set_wallpaper_inner(
+        &state.client,
+        &state.cache_dir,
+        &state.db_path,
+        wallpaper,
+        &settings,
+        layout,
+    )
+    .await?;
+    remember_locked_wallpaper(&state.wallpaper_lock, &wallpaper, layout).await;
+    Ok(wallpaper)
+}
+
+#[tauri::command]
+fn assess_wallpaper_quality(
+    state: State<'_, AppState>,
+    wallpaper: Wallpaper,
+) -> Result<WallpaperQualityReport, String> {
+    let settings = load_settings_from_path(&state.settings_path)
+        .map_err(|error| format!("Could not load settings: {error}"))?;
+    Ok(quality::assess_wallpaper_quality(&wallpaper, &settings))
+}
+
+#[tauri::command]
+fn set_lock_screen_wallpaper(
+    state: State<'_, AppState>,
+    wallpaper: Wallpaper,
+) -> Result<(), String> {
+    let settings = load_settings_from_path(&state.settings_path)
+        .map_err(|error| format!("Could not load settings: {error}"))?;
+    let path = wallpaper
+        .local_path
+        .as_deref()
+        .or_else(|| {
+            if Path::new(&wallpaper.full_url).exists() {
+                Some(wallpaper.full_url.as_str())
+            } else {
+                None
+            }
+        })
+        .ok_or_else(|| {
+            "Download or apply this wallpaper before setting the lock screen.".to_string()
+        })?;
+    wallpaper::set_lock_screen_wallpaper(Path::new(path), settings.wallpaper_layout)
 }
 
 #[tauri::command]
@@ -176,6 +252,106 @@ fn delete_wallpaper(state: State<'_, AppState>, id: String) -> Result<Library, S
 }
 
 #[tauri::command]
+fn create_playlist(state: State<'_, AppState>, name: String) -> Result<Library, String> {
+    cache::create_playlist(&state.db_path, &name)
+}
+
+#[tauri::command]
+fn delete_playlist(state: State<'_, AppState>, playlist_id: String) -> Result<Library, String> {
+    cache::delete_playlist(&state.db_path, &playlist_id)
+}
+
+#[tauri::command]
+fn add_wallpaper_to_playlist(
+    state: State<'_, AppState>,
+    playlist_id: String,
+    wallpaper: Wallpaper,
+) -> Result<Library, String> {
+    cache::add_wallpaper_to_playlist(&state.db_path, &playlist_id, &wallpaper)
+}
+
+#[tauri::command]
+fn remove_wallpaper_from_playlist(
+    state: State<'_, AppState>,
+    playlist_id: String,
+    wallpaper_id: String,
+) -> Result<Library, String> {
+    cache::remove_wallpaper_from_playlist(&state.db_path, &playlist_id, &wallpaper_id)
+}
+
+#[tauri::command]
+fn import_local_folder(
+    state: State<'_, AppState>,
+    folder_path: String,
+) -> Result<ImportResult, String> {
+    cache::import_local_folder(&state.db_path, &state.cache_dir, Path::new(&folder_path))
+}
+
+#[tauri::command]
+fn run_auto_cleanup(state: State<'_, AppState>) -> Result<CacheStats, String> {
+    let settings = load_settings_from_path(&state.settings_path)
+        .map_err(|error| format!("Could not load settings: {error}"))?;
+    cache::cleanup_old_downloads(
+        &state.db_path,
+        &state.cache_dir,
+        settings.auto_clean_days,
+        settings.auto_clean_keep_favorites,
+    )?;
+    cache::cache_stats(&state.cache_dir)
+}
+
+#[tauri::command]
+fn export_backup(state: State<'_, AppState>, target_path: String) -> Result<String, String> {
+    let settings = load_settings_from_path(&state.settings_path)
+        .map_err(|error| format!("Could not load settings: {error}"))?;
+    let payload = BackupPayload {
+        exported_at: unix_timestamp_string(),
+        settings,
+        library: cache::list_library(&state.db_path)?,
+    };
+    let target = PathBuf::from(target_path);
+    if let Some(parent) = target.parent() {
+        fs::create_dir_all(parent)
+            .map_err(|error| format!("Could not create backup directory: {error}"))?;
+    }
+    fs::write(
+        &target,
+        serde_json::to_string_pretty(&payload)
+            .map_err(|error| format!("Could not serialize backup: {error}"))?,
+    )
+    .map_err(|error| format!("Could not write backup: {error}"))?;
+    Ok(target.to_string_lossy().to_string())
+}
+
+#[tauri::command]
+async fn import_backup(
+    app_handle: tauri::AppHandle,
+    state: State<'_, AppState>,
+    source_path: String,
+) -> Result<Library, String> {
+    let raw = fs::read_to_string(&source_path)
+        .map_err(|error| format!("Could not read backup: {error}"))?;
+    let payload: BackupPayload =
+        serde_json::from_str(&raw).map_err(|error| format!("Could not parse backup: {error}"))?;
+    let settings = payload.settings.sanitized();
+    sync_autostart(&app_handle, &settings)?;
+    save_settings_to_path(&state.settings_path, &settings)
+        .map_err(|error| format!("Could not restore settings: {error}"))?;
+    restart_scheduler(state.inner(), settings.auto_change_minutes).await?;
+    if let Err(error) = configure_global_hotkeys(&app_handle, &settings) {
+        eprintln!("Could not update global hotkeys after backup import: {error}");
+    }
+    let mut wallpapers = payload.library.favorites.clone();
+    wallpapers.extend(payload.library.downloaded.clone());
+    for playlist in &payload.library.playlists {
+        wallpapers.extend(playlist.wallpapers.clone());
+    }
+    cache::restore_wallpaper_metadata(&state.db_path, &wallpapers)?;
+    cache::restore_playlists(&state.db_path, &payload.library.playlists)?;
+    cache::list_library(&state.db_path)
+}
+
+#[tauri::command]
 async fn apply_random_wallpaper(state: State<'_, AppState>) -> Result<Wallpaper, String> {
     let wallpaper = apply_random_wallpaper_inner(
         state.client.clone(),
@@ -190,20 +366,76 @@ async fn apply_random_wallpaper(state: State<'_, AppState>) -> Result<Wallpaper,
     Ok(wallpaper)
 }
 
+#[tauri::command]
+async fn apply_next_wallpaper(state: State<'_, AppState>) -> Result<Wallpaper, String> {
+    apply_random_wallpaper(state).await
+}
+
+#[tauri::command]
+fn toggle_auto_change_pause(state: State<'_, AppState>) -> Result<bool, String> {
+    let paused = !state.scheduler_paused.load(Ordering::SeqCst);
+    state.scheduler_paused.store(paused, Ordering::SeqCst);
+    Ok(paused)
+}
+
+#[tauri::command]
+fn pause_global_hotkeys_for_capture(app_handle: tauri::AppHandle) -> Result<(), String> {
+    app_handle
+        .global_shortcut()
+        .unregister_all()
+        .map_err(|error| format!("Could not pause global hotkeys: {error}"))
+}
+
+#[tauri::command]
+fn restore_global_hotkeys_after_capture(
+    app_handle: tauri::AppHandle,
+    state: State<'_, AppState>,
+) -> Result<(), String> {
+    let settings = load_settings_from_path(&state.settings_path)
+        .map_err(|error| format!("Could not load settings: {error}"))?;
+    configure_global_hotkeys(&app_handle, &settings)
+}
+
 async fn set_wallpaper_inner(
     client: &Client,
     cache_dir: &PathBuf,
     db_path: &PathBuf,
     mut wallpaper: Wallpaper,
+    settings: &AppSettings,
     layout: WallpaperLayoutPreference,
-    resolution: settings::ResolutionPreference,
-    cache_limit_mb: u64,
 ) -> Result<Wallpaper, String> {
-    let local_path = cache::download_wallpaper(client, cache_dir, &wallpaper).await?;
-    let screen_path = wallpaper::prepare_wallpaper_for_screen(&local_path, cache_dir, resolution);
+    let report = quality::assess_wallpaper_quality(&wallpaper, settings);
+    if settings.quality_guard_mode == settings::QualityGuardMode::Skip && !report.ok {
+        return Err(quality::quality_error_message(&report));
+    }
+
+    let local_path = wallpaper
+        .local_path
+        .as_deref()
+        .map(PathBuf::from)
+        .filter(|path| path.exists())
+        .or_else(|| {
+            let path = PathBuf::from(&wallpaper.full_url);
+            path.exists().then_some(path)
+        });
+    let local_path = match local_path {
+        Some(path) => path,
+        None => cache::download_wallpaper(client, cache_dir, &wallpaper).await?,
+    };
+    let screen_path =
+        wallpaper::prepare_wallpaper_for_screen(&local_path, cache_dir, settings.resolution);
     wallpaper::set_desktop_wallpaper(&screen_path, layout)?;
+    if settings.apply_to_lock_screen {
+        let _ = wallpaper::set_lock_screen_wallpaper(&screen_path, layout);
+    }
     cache::record_wallpaper_used(db_path, &wallpaper, &screen_path)?;
-    cache::enforce_cache_limit_mb(cache_dir, db_path, cache_limit_mb)?;
+    cache::enforce_cache_limit_mb(cache_dir, db_path, settings.cache_limit_mb)?;
+    cache::cleanup_old_downloads(
+        db_path,
+        cache_dir,
+        settings.auto_clean_days,
+        settings.auto_clean_keep_favorites,
+    )?;
     wallpaper.local_path = Some(screen_path.to_string_lossy().to_string());
     Ok(wallpaper)
 }
@@ -216,6 +448,20 @@ async fn apply_random_wallpaper_inner(
 ) -> Result<Wallpaper, String> {
     let settings = load_settings_from_path(&settings_path)
         .map_err(|error| format!("Could not load settings: {error}"))?;
+    if let Some(playlist_id) = settings.active_playlist_id.as_deref() {
+        if let Some(wallpaper) = cache::random_playlist_wallpaper(&db_path, playlist_id)? {
+            return set_wallpaper_inner(
+                &client,
+                &cache_dir,
+                &db_path,
+                wallpaper,
+                &settings,
+                settings.wallpaper_layout,
+            )
+            .await;
+        }
+    }
+
     match api::random_wallpapers(
         &client,
         ApiSource::All,
@@ -228,16 +474,15 @@ async fn apply_random_wallpaper_inner(
         Ok(mut wallpapers) => {
             let wallpaper = wallpapers
                 .drain(..)
-                .next()
-                .ok_or_else(|| "No random wallpapers were returned.".to_string())?;
+                .find(|wallpaper| !quality::should_skip_wallpaper(wallpaper, &settings))
+                .ok_or_else(|| "No random high-quality wallpapers were returned.".to_string())?;
             set_wallpaper_inner(
                 &client,
                 &cache_dir,
                 &db_path,
                 wallpaper,
+                &settings,
                 settings.wallpaper_layout,
-                settings.resolution,
-                settings.cache_limit_mb,
             )
             .await
         }
@@ -284,6 +529,7 @@ async fn restart_scheduler(state: &AppState, interval_minutes: u64) -> Result<()
     let db_path = state.db_path.clone();
     let cache_dir = state.cache_dir.clone();
     let wallpaper_lock = state.wallpaper_lock.clone();
+    let scheduler_paused = state.scheduler_paused.clone();
 
     *scheduler = Some(tauri::async_runtime::spawn(async move {
         let first_tick = tokio::time::Instant::from_std(scheduler_first_tick_at(
@@ -293,6 +539,9 @@ async fn restart_scheduler(state: &AppState, interval_minutes: u64) -> Result<()
         let mut timer = tokio::time::interval_at(first_tick, interval);
         loop {
             timer.tick().await;
+            if scheduler_paused.load(Ordering::SeqCst) {
+                continue;
+            }
             if let Ok(wallpaper) = apply_random_wallpaper_inner(
                 client.clone(),
                 settings_path.clone(),
@@ -552,18 +801,172 @@ fn handle_exit_requested(app_handle: &tauri::AppHandle, api: &tauri::ExitRequest
     }
 }
 
+fn apply_next_from_app_handle(app_handle: &tauri::AppHandle) {
+    let Some(state) = app_handle.try_state::<AppState>() else {
+        return;
+    };
+    let client = state.client.clone();
+    let settings_path = state.settings_path.clone();
+    let db_path = state.db_path.clone();
+    let cache_dir = state.cache_dir.clone();
+    let wallpaper_lock = state.wallpaper_lock.clone();
+
+    tauri::async_runtime::spawn(async move {
+        if let Ok(wallpaper) =
+            apply_random_wallpaper_inner(client, settings_path.clone(), db_path, cache_dir).await
+        {
+            if let Ok(settings) = load_settings_from_path(&settings_path) {
+                remember_locked_wallpaper(&wallpaper_lock, &wallpaper, settings.wallpaper_layout)
+                    .await;
+            }
+        }
+    });
+}
+
+fn favorite_current_from_app_handle(app_handle: &tauri::AppHandle) {
+    let Some(state) = app_handle.try_state::<AppState>() else {
+        return;
+    };
+    if let Ok(Some(wallpaper)) = cache::last_used_wallpaper(&state.db_path) {
+        let _ = cache::set_favorite(&state.db_path, &wallpaper, true);
+    }
+}
+
+fn toggle_scheduler_pause_from_app_handle(app_handle: &tauri::AppHandle) {
+    let Some(state) = app_handle.try_state::<AppState>() else {
+        return;
+    };
+    let paused = !state.scheduler_paused.load(Ordering::SeqCst);
+    state.scheduler_paused.store(paused, Ordering::SeqCst);
+}
+
+fn tray_menu_items() -> [(&'static str, &'static str); 5] {
+    [
+        (TRAY_OPEN_ID, "Open Wallpaper Engine"),
+        (TRAY_NEXT_ID, "Next wallpaper"),
+        (TRAY_PAUSE_ID, "Pause or resume auto-change"),
+        (TRAY_FAVORITE_ID, "Favorite current wallpaper"),
+        (TRAY_QUIT_ID, "Quit"),
+    ]
+}
+
+fn parse_hotkey_setting(label: &str, value: &str) -> Result<Shortcut, String> {
+    value
+        .parse::<Shortcut>()
+        .map_err(|error| format!("{label} hotkey is invalid: {error}"))
+}
+
+fn configured_hotkey_shortcuts(
+    settings: &HotkeySettings,
+) -> Result<Vec<(Shortcut, &'static str)>, String> {
+    let shortcuts = vec![
+        (
+            parse_hotkey_setting("Next wallpaper", &settings.next_wallpaper)?,
+            HOTKEY_NEXT_ID,
+        ),
+        (
+            parse_hotkey_setting("Pause rotation", &settings.pause_rotation)?,
+            HOTKEY_PAUSE_ID,
+        ),
+        (
+            parse_hotkey_setting("Favorite current", &settings.favorite_current)?,
+            HOTKEY_FAVORITE_ID,
+        ),
+    ];
+
+    for (index, (shortcut, _)) in shortcuts.iter().enumerate() {
+        if shortcuts
+            .iter()
+            .skip(index + 1)
+            .any(|(candidate, _)| candidate == shortcut)
+        {
+            return Err("Hotkeys must be unique.".into());
+        }
+    }
+
+    Ok(shortcuts)
+}
+
+fn validate_hotkey_settings(settings: &HotkeySettings) -> Result<(), String> {
+    configured_hotkey_shortcuts(settings).map(|_| ())
+}
+
+fn configure_global_hotkeys(
+    app_handle: &tauri::AppHandle,
+    settings: &AppSettings,
+) -> Result<(), String> {
+    let manager = app_handle.global_shortcut();
+    manager
+        .unregister_all()
+        .map_err(|error| format!("Could not reset global hotkeys: {error}"))?;
+
+    if !settings.global_hotkeys_enabled {
+        return Ok(());
+    }
+
+    let shortcuts = configured_hotkey_shortcuts(&settings.hotkeys)?;
+    manager
+        .register_multiple(shortcuts.into_iter().map(|(shortcut, _)| shortcut))
+        .map_err(|error| format!("Could not register global hotkeys: {error}"))
+}
+
+fn global_hotkey_action(shortcut: &Shortcut, settings: &HotkeySettings) -> Option<&'static str> {
+    configured_hotkey_shortcuts(settings)
+        .ok()?
+        .into_iter()
+        .find_map(|(candidate, action)| (candidate == *shortcut).then_some(action))
+}
+
+fn handle_global_hotkey(app_handle: &tauri::AppHandle, shortcut: &Shortcut) {
+    let Some(state) = app_handle.try_state::<AppState>() else {
+        return;
+    };
+    let Ok(settings) = load_settings_from_path(&state.settings_path) else {
+        return;
+    };
+    if !settings.global_hotkeys_enabled {
+        return;
+    }
+
+    match global_hotkey_action(shortcut, &settings.hotkeys) {
+        Some(HOTKEY_NEXT_ID) => apply_next_from_app_handle(app_handle),
+        Some(HOTKEY_PAUSE_ID) => toggle_scheduler_pause_from_app_handle(app_handle),
+        Some(HOTKEY_FAVORITE_ID) => favorite_current_from_app_handle(app_handle),
+        _ => {}
+    }
+}
+
+fn setup_global_hotkeys(app: &tauri::App) -> Result<(), Box<dyn std::error::Error>> {
+    app.handle().plugin(
+        tauri_plugin_global_shortcut::Builder::new()
+            .with_handler(|app_handle, shortcut, event| {
+                if event.state == ShortcutState::Pressed {
+                    handle_global_hotkey(app_handle, shortcut);
+                }
+            })
+            .build(),
+    )?;
+    Ok(())
+}
+
 fn setup_tray(app: &tauri::App) -> Result<(), Box<dyn std::error::Error>> {
-    let menu = MenuBuilder::new(app)
-        .text(TRAY_OPEN_ID, "Open Wallpaper Engine")
-        .separator()
-        .text(TRAY_QUIT_ID, "Quit")
-        .build()?;
+    let mut menu = MenuBuilder::new(app);
+    for (index, (id, label)) in tray_menu_items().into_iter().enumerate() {
+        if index == 1 || index == 4 {
+            menu = menu.separator();
+        }
+        menu = menu.text(id, label);
+    }
+    let menu = menu.build()?;
     let mut tray = TrayIconBuilder::with_id("main")
         .menu(&menu)
         .tooltip("Wallpaper Engine")
         .show_menu_on_left_click(true)
         .on_menu_event(|app_handle, event| match event.id().as_ref() {
             TRAY_OPEN_ID => show_main_window(app_handle),
+            TRAY_NEXT_ID => apply_next_from_app_handle(app_handle),
+            TRAY_PAUSE_ID => toggle_scheduler_pause_from_app_handle(app_handle),
+            TRAY_FAVORITE_ID => favorite_current_from_app_handle(app_handle),
             TRAY_QUIT_ID => request_explicit_exit(app_handle),
             _ => {}
         });
@@ -589,6 +992,7 @@ pub fn run() {
 
     let app = tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
+        .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_autostart::init(
             tauri_plugin_autostart::MacosLauncher::LaunchAgent,
             Some(vec!["--background".into()]),
@@ -624,10 +1028,17 @@ pub fn run() {
                 db_path,
                 cache_dir,
                 scheduler: Mutex::new(None),
+                scheduler_paused: Arc::new(AtomicBool::new(false)),
                 wallpaper_lock,
                 startup_wallpaper,
                 explicit_exit_requested: AtomicBool::new(false),
             });
+            if let Err(error) = setup_global_hotkeys(app) {
+                eprintln!("Could not register global hotkeys: {error}");
+            }
+            if let Err(error) = configure_global_hotkeys(app.handle(), &settings) {
+                eprintln!("Could not configure global hotkeys: {error}");
+            }
             if let Some(interval) = startup_interval {
                 let state = app.state::<AppState>();
                 tauri::async_runtime::block_on(restart_scheduler(
@@ -650,14 +1061,29 @@ pub fn run() {
             search_wallpapers,
             random_wallpapers,
             set_wallpaper,
+            set_wallpaper_with_layout,
+            assess_wallpaper_quality,
+            set_lock_screen_wallpaper,
             save_favorite,
             list_library,
             cache_stats,
             clear_cache,
             clear_library,
             delete_wallpaper,
+            create_playlist,
+            delete_playlist,
+            add_wallpaper_to_playlist,
+            remove_wallpaper_from_playlist,
+            import_local_folder,
+            run_auto_cleanup,
+            export_backup,
+            import_backup,
             set_favorite,
-            apply_random_wallpaper
+            apply_random_wallpaper,
+            apply_next_wallpaper,
+            toggle_auto_change_pause,
+            pause_global_hotkeys_for_capture,
+            restore_global_hotkeys_after_capture
         ])
         .build(tauri::generate_context!())
         .expect("error while running tauri application");
@@ -698,6 +1124,13 @@ fn is_macos_dmg_staging_executable(path: &Path) -> bool {
     parts
         .windows(2)
         .any(|window| window[0] == "Volumes" && window[1].starts_with("dmg."))
+}
+
+fn unix_timestamp_string() -> String {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|duration| duration.as_secs().to_string())
+        .unwrap_or_else(|_| "0".into())
 }
 
 #[cfg(test)]
@@ -887,6 +1320,63 @@ mod config_tests {
             app_exit_action(&background, true),
             AppExitAction::ExitProcess
         );
+    }
+
+    #[test]
+    fn tray_menu_exposes_background_quick_actions() {
+        let items = tray_menu_items();
+        let ids = items.map(|(id, _)| id);
+
+        assert!(ids.contains(&TRAY_NEXT_ID));
+        assert!(ids.contains(&TRAY_PAUSE_ID));
+        assert!(ids.contains(&TRAY_FAVORITE_ID));
+        assert!(ids.contains(&TRAY_QUIT_ID));
+    }
+
+    #[test]
+    fn global_shortcuts_map_to_quick_actions() {
+        let settings = HotkeySettings::default();
+
+        for (shortcut, action) in
+            configured_hotkey_shortcuts(&settings).expect("default hotkeys should parse")
+        {
+            assert_eq!(global_hotkey_action(&shortcut, &settings), Some(action));
+        }
+    }
+
+    #[test]
+    fn custom_global_shortcuts_map_to_quick_actions() {
+        let settings = HotkeySettings {
+            next_wallpaper: "Control+Shift+Right".into(),
+            pause_rotation: "Control+Shift+Down".into(),
+            favorite_current: "Control+Shift+F".into(),
+        };
+        let shortcuts =
+            configured_hotkey_shortcuts(&settings).expect("custom hotkeys should parse");
+
+        assert_eq!(
+            global_hotkey_action(&shortcuts[0].0, &settings),
+            Some(HOTKEY_NEXT_ID)
+        );
+        assert_eq!(
+            global_hotkey_action(&shortcuts[1].0, &settings),
+            Some(HOTKEY_PAUSE_ID)
+        );
+        assert_eq!(
+            global_hotkey_action(&shortcuts[2].0, &settings),
+            Some(HOTKEY_FAVORITE_ID)
+        );
+    }
+
+    #[test]
+    fn duplicate_global_shortcuts_are_rejected() {
+        let settings = HotkeySettings {
+            next_wallpaper: "Control+Shift+Right".into(),
+            pause_rotation: "Control+Shift+Right".into(),
+            favorite_current: "Control+Shift+F".into(),
+        };
+
+        assert!(configured_hotkey_shortcuts(&settings).is_err());
     }
 
     #[test]

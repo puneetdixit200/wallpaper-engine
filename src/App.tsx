@@ -84,16 +84,6 @@ function AppShell() {
       data-resolved-theme={resolvedTheme}
     >
       <aside className="sidebar">
-        <div className="brand">
-          <div className="brand-mark" aria-hidden="true">
-            <img src="/icon.svg" alt="" />
-          </div>
-          <div>
-            <h1>Wallpaper Engine</h1>
-            <p>Desktop wallpaper control</p>
-          </div>
-        </div>
-
         <nav className="nav-list" aria-label="Primary">
           {navItems.map((item) => {
             const Icon = item.icon;

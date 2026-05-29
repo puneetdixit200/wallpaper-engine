@@ -32,9 +32,19 @@ pub struct Wallpaper {
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
+pub struct WallpaperPlaylist {
+    pub id: String,
+    pub name: String,
+    pub wallpapers: Vec<Wallpaper>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
 pub struct Library {
     pub favorites: Vec<Wallpaper>,
     pub downloaded: Vec<Wallpaper>,
+    #[serde(default)]
+    pub playlists: Vec<WallpaperPlaylist>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -42,4 +52,18 @@ pub struct Library {
 pub struct CacheStats {
     pub bytes: u64,
     pub files: u64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct ImportResult {
+    pub imported: u64,
+    pub skipped: u64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct WallpaperQualityReport {
+    pub ok: bool,
+    pub warnings: Vec<String>,
 }

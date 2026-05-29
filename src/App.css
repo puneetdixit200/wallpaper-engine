@@ -605,6 +605,73 @@ select:focus-visible {
   outline: 0;
 }
 
+.filter-panel,
+.tool-strip {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 12px;
+  align-items: end;
+  padding: 14px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--surface);
+}
+
+.filter-heading {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--heading);
+  font-weight: 800;
+}
+
+.filter-panel label,
+.inline-tool label {
+  display: grid;
+  gap: 7px;
+  min-width: 0;
+  color: var(--text);
+  font-weight: 800;
+}
+
+.filter-panel label span,
+.inline-tool label span {
+  color: var(--muted);
+  font-size: 0.78rem;
+}
+
+.filter-panel input,
+.filter-panel select,
+.inline-tool input,
+.inline-tool select {
+  width: 100%;
+  min-height: 40px;
+  padding: 0 11px;
+  border: 1px solid var(--border-strong);
+  border-radius: 8px;
+  color: var(--text);
+  background: var(--field-bg);
+}
+
+.tool-strip {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.inline-tool {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 10px;
+  align-items: end;
+  min-width: 0;
+}
+
+.tool-note {
+  margin: 0;
+  color: var(--muted);
+  font-size: 0.9rem;
+  font-weight: 700;
+}
+
 .settings-form input,
 .settings-form select {
   padding: 0 12px;
@@ -673,6 +740,20 @@ select:focus-visible {
   padding: 0 12px 12px;
 }
 
+.wall-badges {
+  display: flex;
+  padding: 0 12px 8px;
+}
+
+.wall-badges span {
+  padding: 4px 8px;
+  border-radius: 999px;
+  color: var(--warning-text);
+  background: var(--warning-bg);
+  font-size: 0.72rem;
+  font-weight: 800;
+}
+
 .icon-button {
   display: grid;
   place-items: center;
@@ -689,6 +770,140 @@ select:focus-visible {
 .icon-button.danger {
   color: var(--danger);
   background: color-mix(in srgb, var(--danger) 12%, var(--surface-raised));
+}
+
+.playlist-picker {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 8px;
+  padding: 0 12px 12px;
+}
+
+.playlist-picker select {
+  min-width: 0;
+  min-height: 38px;
+  padding: 0 10px;
+  border: 1px solid var(--border-strong);
+  border-radius: 8px;
+  color: var(--text);
+  background: var(--field-bg);
+}
+
+.playlist-section {
+  display: grid;
+  gap: 14px;
+  padding-top: 18px;
+  border-top: 1px solid var(--border);
+}
+
+.title-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.playlist-wall {
+  display: grid;
+  gap: 8px;
+}
+
+.compact-button {
+  min-height: 34px;
+  font-size: 0.85rem;
+}
+
+.modal-scrim {
+  position: fixed;
+  inset: 0;
+  z-index: 50;
+  display: grid;
+  place-items: center;
+  padding: 20px;
+  background: rgba(5, 8, 7, 0.72);
+}
+
+.preview-modal {
+  display: grid;
+  gap: 14px;
+  width: min(760px, 100%);
+  max-height: min(820px, calc(100vh - 40px));
+  overflow: auto;
+  padding: 18px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--surface);
+  box-shadow: var(--shadow);
+}
+
+.modal-header,
+.modal-actions {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.modal-header h3,
+.modal-header p {
+  margin: 0;
+}
+
+.crop-preview-frame {
+  display: grid;
+  place-items: center;
+  aspect-ratio: 16 / 9;
+  min-height: 220px;
+  overflow: hidden;
+  border-radius: 8px;
+  background:
+    repeating-linear-gradient(
+      45deg,
+      color-mix(in srgb, var(--surface-muted) 90%, transparent) 0,
+      color-mix(in srgb, var(--surface-muted) 90%, transparent) 12px,
+      transparent 12px,
+      transparent 24px
+    ),
+    var(--preview-bg);
+}
+
+.crop-preview-frame img {
+  width: 100%;
+  height: 100%;
+  object-position: center;
+}
+
+.layout-selector {
+  display: grid;
+  grid-template-columns: repeat(6, minmax(0, 1fr));
+  gap: 6px;
+  padding: 4px;
+  border-radius: 8px;
+  background: var(--surface-muted);
+}
+
+.layout-selector button {
+  min-height: 36px;
+  border-radius: 8px;
+  color: var(--text);
+  background: transparent;
+  cursor: pointer;
+  font-weight: 800;
+  text-transform: capitalize;
+}
+
+.layout-selector button.active {
+  color: var(--sidebar-text);
+  background: var(--sidebar-bg);
+}
+
+.quality-list {
+  margin: 0;
+  padding: 11px 12px 11px 30px;
+  border-radius: 8px;
+  color: var(--warning-text);
+  background: var(--warning-bg);
+  font-size: 0.9rem;
+  line-height: 1.45;
 }
 
 .wall-skeleton {
@@ -897,10 +1112,54 @@ select:focus-visible {
   font-weight: 800;
 }
 
+.hotkey-field {
+  display: grid;
+  gap: 8px;
+  min-width: 0;
+  color: var(--text);
+  font-weight: 800;
+}
+
+.hotkey-capture {
+  width: 100%;
+  min-height: 42px;
+  padding: 0 12px;
+  border: 1px solid var(--border-strong);
+  border-radius: 8px;
+  color: var(--text);
+  background: var(--field-bg);
+  text-align: left;
+  cursor: pointer;
+  overflow-wrap: anywhere;
+}
+
+.hotkey-capture.active {
+  border-color: var(--accent);
+  color: var(--accent-soft-text);
+  background: var(--accent-soft);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 18%, transparent);
+}
+
+.hotkey-hint {
+  color: var(--muted);
+  font-size: 0.78rem;
+  font-weight: 700;
+  line-height: 1.35;
+}
+
 .form-grid {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: 14px;
+}
+
+.form-grid.two-column {
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  align-items: end;
+}
+
+.compact-actions {
+  justify-content: flex-start;
 }
 
 .settings-form .checkbox-row {
@@ -929,6 +1188,25 @@ select:focus-visible {
   margin-left: auto;
   color: var(--muted);
   font-size: 0.9rem;
+}
+
+.settings-credit {
+  display: flex;
+  justify-content: center;
+  gap: 4px;
+  padding-top: 10px;
+  color: var(--muted);
+  font-size: 0.9rem;
+  font-weight: 800;
+}
+
+.settings-credit a {
+  color: var(--accent);
+  text-decoration: none;
+}
+
+.settings-credit a:hover {
+  text-decoration: underline;
 }
 
 @media (max-width: 860px) {
@@ -992,6 +1270,16 @@ select:focus-visible {
     grid-template-columns: 1fr;
   }
 
+  .form-grid.two-column,
+  .filter-panel,
+  .tool-strip {
+    grid-template-columns: 1fr;
+  }
+
+  .inline-tool {
+    grid-template-columns: 1fr;
+  }
+
   .automation-controls,
   .toggle-grid {
     grid-template-columns: 1fr;
@@ -1023,6 +1311,15 @@ select:focus-visible {
 
   .wall-grid {
     grid-template-columns: 1fr;
+  }
+
+  .layout-selector {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+
+  .modal-actions,
+  .inline-tool {
+    align-items: stretch;
   }
 
   .automation-presets {
