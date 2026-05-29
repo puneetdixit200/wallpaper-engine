@@ -46,6 +46,7 @@ The frontend never calls wallpaper providers directly and never touches arbitrar
 |-- src/
 |   |-- App.tsx                  # Root shell, sidebar, theme resolution
 |   |-- appState.tsx             # React reducer, context, Tauri action wrappers
+|   |-- appLog.ts                # Frontend action-log bridge to Tauri
 |   |-- types.ts                 # Frontend DTOs and settings types
 |   |-- pages/                   # Home, Search, Library, Sync, Controls, Settings views
 |   |-- components/              # Wall cards, empty states, skeletons, error boundary
@@ -59,6 +60,7 @@ The frontend never calls wallpaper providers directly and never touches arbitrar
 |   |-- Cargo.toml
 |   `-- src/
 |       |-- lib.rs               # Tauri setup, commands, scheduler
+|       |-- app_log.rs           # JSON-lines action log and redaction
 |       |-- models.rs            # Rust DTOs
 |       |-- settings.rs          # Settings schema and sanitization
 |       |-- sync.rs              # Supabase sync snapshot client
@@ -97,10 +99,11 @@ Derived context values include `hasAnyKey` and `favoriteIds`.
 Context actions wrap Tauri commands with a common `runWithStatus` flow:
 
 1. Set the `busy` label and clear the old notice.
-2. Reject wallpaper actions outside the Tauri runtime with a clear message.
-3. Invoke the backend command.
-4. Store success messages or command errors.
-5. Refresh library/cache state after mutations.
+2. Write frontend action-start records through the `write_app_log` Tauri command.
+3. Reject wallpaper actions outside the Tauri runtime with a clear message.
+4. Invoke the backend command.
+5. Store success messages or command errors and write success/error log records.
+6. Refresh library/cache state after mutations.
 
 Important actions:
 
@@ -152,6 +155,7 @@ The backend is split by responsibility:
 | `sync.rs` | Supabase REST snapshot validation, Clerk/manual row identity resolution, push, pull, and portable-library import helpers. |
 | `wallpaper.rs` | Screen sizing, image resizing, OS wallpaper commands. |
 | `models.rs` | Serde DTOs shared across commands. |
+| `app_log.rs` | Append-only JSON-lines action log with secret-field redaction. |
 
 ### Backend AppState
 
@@ -161,6 +165,7 @@ pub struct AppState {
     settings_path: PathBuf,
     db_path: PathBuf,
     cache_dir: PathBuf,
+    log_path: PathBuf,
     scheduler: Mutex<Option<JoinHandle<()>>>,
     wallpaper_lock: Arc<Mutex<Option<wallpaper::WallpaperLock>>>,
     startup_wallpaper: Arc<Mutex<Option<wallpaper::WallpaperLock>>>,
@@ -169,6 +174,20 @@ pub struct AppState {
 ```
 
 The `reqwest::Client` is reused. SQLite still opens short-lived connections per operation, but schema creation is guarded by an init-once registry so `CREATE TABLE IF NOT EXISTS` is not rerun for every command.
+
+## Action Logging
+
+The app writes an append-only JSON-lines log at:
+
+```text
+<app data dir>/logs/wallpaper-engine.log
+```
+
+Typical platform locations are `~/Library/Application Support/com.puneetdixit.wallpaperengine/logs/wallpaper-engine.log` on macOS, `%APPDATA%\com.puneetdixit.wallpaperengine\logs\wallpaper-engine.log` on Windows, and `~/.local/share/com.puneetdixit.wallpaperengine/logs/wallpaper-engine.log` on Linux.
+
+Each record includes `timestampUnixMs`, `level`, `target`, `action`, `message`, and `details`. React writes UI-level actions through `src/appLog.ts` and `write_app_log`; Rust writes backend actions directly for startup, settings, searches, wallpaper application, cache/library mutation, imports/backups, Supabase sync, scheduler ticks, tray menu actions, global hotkeys, and close/background lifecycle events.
+
+`app_log.rs` recursively redacts sensitive field names such as API keys, anon keys, passwords, secrets, and tokens before appending records. Settings logs store booleans such as provider configured/not configured instead of the actual credential values.
 
 ## Settings
 

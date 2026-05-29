@@ -7,6 +7,7 @@ import {
   emitClerkAuthEvent,
   isDesktopAuthCallbackUrl,
 } from "./clerkDesktopAuth";
+import { logAppAction } from "./appLog";
 
 interface ClerkDeepLinkBridgeProps {
   onAuthenticated: () => void;
@@ -42,6 +43,7 @@ export function ClerkDeepLinkBridge({
           continue;
         }
         processedUrls.current.add(url);
+        void logAppAction("clerk.deep_link.received", "Clerk deep link received.");
         await completeClerkRedirect(url);
       }
     }
@@ -52,6 +54,10 @@ export function ClerkDeepLinkBridge({
         message: "Finishing browser sign-in...",
       });
       try {
+        void logAppAction(
+          "clerk.deep_link.complete.start",
+          "Completing Clerk browser sign-in callback.",
+        );
         const callbackPath = desktopAuthCallbackUrlToLocalPath(url);
         window.history.replaceState({}, "", callbackPath);
         await clerk.handleRedirectCallback(
@@ -69,22 +75,40 @@ export function ClerkDeepLinkBridge({
           state: "success",
           message: "Signed in with Clerk.",
         });
+        void logAppAction(
+          "clerk.deep_link.complete.success",
+          "Clerk browser sign-in completed.",
+        );
       } catch (error) {
         window.history.replaceState({}, "", "/");
         emitClerkAuthEvent({
           state: "error",
           message: `Clerk browser sign-in failed: ${clerkErrorMessage(error)}`,
         });
+        void logAppAction(
+          "clerk.deep_link.complete.error",
+          "Clerk browser sign-in callback failed.",
+          { error: clerkErrorMessage(error) },
+          "error",
+        );
       }
     }
 
     void getCurrent()
       .then(processUrls)
       .catch((error) =>
-        emitClerkAuthEvent({
-          state: "error",
-          message: `Could not read deep link callback: ${clerkErrorMessage(error)}`,
-        }),
+        {
+          emitClerkAuthEvent({
+            state: "error",
+            message: `Could not read deep link callback: ${clerkErrorMessage(error)}`,
+          });
+          void logAppAction(
+            "clerk.deep_link.current.error",
+            "Could not read current deep link callback.",
+            { error: clerkErrorMessage(error) },
+            "error",
+          );
+        },
       );
 
     void onOpenUrl((urls) => {
@@ -94,10 +118,18 @@ export function ClerkDeepLinkBridge({
         unlisten = nextUnlisten;
       })
       .catch((error) =>
-        emitClerkAuthEvent({
-          state: "error",
-          message: `Could not listen for deep links: ${clerkErrorMessage(error)}`,
-        }),
+        {
+          emitClerkAuthEvent({
+            state: "error",
+            message: `Could not listen for deep links: ${clerkErrorMessage(error)}`,
+          });
+          void logAppAction(
+            "clerk.deep_link.listen.error",
+            "Could not listen for Clerk deep links.",
+            { error: clerkErrorMessage(error) },
+            "error",
+          );
+        },
       );
 
     return () => {

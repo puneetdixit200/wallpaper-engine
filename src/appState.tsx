@@ -25,6 +25,7 @@ import {
   Wallpaper,
   WallpaperQualityReport,
 } from "./types";
+import { logAppAction } from "./appLog";
 import { sourceSelectionSearch } from "./searchFlow";
 import { pickRandomMoodQuery, pickRandomWallpaper } from "./wallpaperSelection";
 
@@ -203,11 +204,19 @@ export function AppStateProvider({ children }: AppStateProviderProps) {
       }
 
       try {
+        void logAppAction("app.boot.start", "App boot state load started.");
         const loaded = await invoke<AppSettings>("get_settings");
         dispatch({ type: "settingsLoaded", settings: loaded });
         await Promise.all([refreshLibrary(), refreshCacheStats()]);
+        void logAppAction("app.boot.success", "App boot state loaded.");
       } catch (error) {
         dispatch({ type: "noticeChanged", notice: String(error) });
+        void logAppAction(
+          "app.boot.error",
+          "App boot state load failed.",
+          { error: String(error) },
+          "error",
+        );
       }
     }
 
@@ -222,11 +231,18 @@ export function AppStateProvider({ children }: AppStateProviderProps) {
     ): Promise<T | null> => {
       dispatch({ type: "busyChanged", busy: label });
       dispatch({ type: "noticeChanged", notice: "" });
+      void logAppAction("action.start", "UI action started.", { label });
       if (!isTauriRuntime()) {
         dispatch({
           type: "noticeChanged",
           notice: "Open the desktop app to use wallpaper actions.",
         });
+        void logAppAction(
+          "action.unavailable",
+          "UI action skipped outside desktop runtime.",
+          { label },
+          "warn",
+        );
         dispatch({ type: "busyChanged", busy: null });
         return null;
       }
@@ -236,9 +252,19 @@ export function AppStateProvider({ children }: AppStateProviderProps) {
         if (done) {
           dispatch({ type: "noticeChanged", notice: done });
         }
+        void logAppAction("action.success", "UI action completed.", {
+          label,
+          notice: done ?? "",
+        });
         return value;
       } catch (error) {
         dispatch({ type: "noticeChanged", notice: String(error) });
+        void logAppAction(
+          "action.error",
+          "UI action failed.",
+          { label, error: String(error) },
+          "error",
+        );
         return null;
       } finally {
         dispatch({ type: "busyChanged", busy: null });
@@ -249,6 +275,16 @@ export function AppStateProvider({ children }: AppStateProviderProps) {
 
   const saveSettings = useCallback(
     async (nextSettings: AppSettings) => {
+      void logAppAction("settings.save.request", "Settings save requested.", {
+        autoChangeMinutes: nextSettings.autoChangeMinutes,
+        resolution: nextSettings.resolution,
+        wallpaperLayout: nextSettings.wallpaperLayout,
+        runInBackground: nextSettings.runInBackground,
+        launchAtStartup: nextSettings.launchAtStartup,
+        globalHotkeysEnabled: nextSettings.globalHotkeysEnabled,
+        supabaseEnabled: nextSettings.supabaseSync.enabled,
+        clerkEnabled: nextSettings.clerkAuth.enabled,
+      });
       const saved = await runWithStatus(
         "settings",
         () => invoke<AppSettings>("save_settings", { settings: nextSettings }),
@@ -268,6 +304,12 @@ export function AppStateProvider({ children }: AppStateProviderProps) {
       nextSource = state.source,
       nextMood: Mood | null = null,
     ) => {
+      void logAppAction("search.request", "Wallpaper search requested.", {
+        query: nextQuery,
+        page: nextPage,
+        source: nextSource,
+        mood: nextMood,
+      });
       const wallpapers = await runWithStatus("search", () =>
         invoke<Wallpaper[]>("search_wallpapers", {
           query: nextQuery,
@@ -293,6 +335,10 @@ export function AppStateProvider({ children }: AppStateProviderProps) {
 
   const changeSource = useCallback(
     async (nextSource: ApiSource) => {
+      void logAppAction("search.source.change", "Wallpaper source changed.", {
+        from: state.source,
+        to: nextSource,
+      });
       dispatch({ type: "sourceChanged", source: nextSource });
       const request = sourceSelectionSearch(state.query, nextSource);
       await searchWallpapers(
@@ -311,16 +357,40 @@ export function AppStateProvider({ children }: AppStateProviderProps) {
       }
 
       try {
+        void logAppAction("quality.warning.check", "Quality warning check started.", {
+          wallpaperId: wallpaper.id,
+          source: wallpaper.source,
+        });
         const report = await invoke<WallpaperQualityReport>(
           "assess_wallpaper_quality",
           { wallpaper },
         );
-        return (
-          report.warnings.length === 0 ||
-          window.confirm(`Apply anyway?\n\n${report.warnings.join("\n")}`)
+        if (report.warnings.length === 0) {
+          void logAppAction("quality.warning.ok", "Quality warning check passed.", {
+            wallpaperId: wallpaper.id,
+          });
+          return true;
+        }
+        const accepted = window.confirm(
+          `Apply anyway?\n\n${report.warnings.join("\n")}`,
         );
+        void logAppAction(
+          accepted ? "quality.warning.accepted" : "quality.warning.rejected",
+          accepted
+            ? "User accepted quality warning."
+            : "User rejected quality warning.",
+          { wallpaperId: wallpaper.id, warnings: report.warnings },
+          accepted ? "warn" : "info",
+        );
+        return accepted;
       } catch (error) {
         dispatch({ type: "noticeChanged", notice: String(error) });
+        void logAppAction(
+          "quality.warning.error",
+          "Quality warning check failed.",
+          { wallpaperId: wallpaper.id, error: String(error) },
+          "error",
+        );
         return false;
       }
     },
@@ -521,11 +591,20 @@ export function AppStateProvider({ children }: AppStateProviderProps) {
     ): Promise<SupabaseSyncStatus> => {
       dispatch({ type: "busyChanged", busy: label });
       dispatch({ type: "noticeChanged", notice: "" });
+      void logAppAction("sync.action.start", "Sync action started.", {
+        label,
+      });
       if (!isTauriRuntime()) {
         const status = failedSyncStatus(
           "Open the desktop app to test Supabase sync.",
         );
         dispatch({ type: "noticeChanged", notice: status.message });
+        void logAppAction(
+          "sync.action.unavailable",
+          "Sync action skipped outside desktop runtime.",
+          { label },
+          "warn",
+        );
         dispatch({ type: "busyChanged", busy: null });
         return status;
       }
@@ -535,10 +614,21 @@ export function AppStateProvider({ children }: AppStateProviderProps) {
         await applyResult?.(result);
         const status = statusFromResult(result);
         dispatch({ type: "noticeChanged", notice: syncNotice(status) });
+        void logAppAction("sync.action.success", "Sync action completed.", {
+          label,
+          connected: status.connected,
+          message: status.message,
+        });
         return status;
       } catch (error) {
         const status = failedSyncStatus(String(error));
         dispatch({ type: "noticeChanged", notice: status.message });
+        void logAppAction(
+          "sync.action.error",
+          "Sync action failed.",
+          { label, error: status.message },
+          "error",
+        );
         return status;
       } finally {
         dispatch({ type: "busyChanged", busy: null });
@@ -640,6 +730,10 @@ export function AppStateProvider({ children }: AppStateProviderProps) {
   const applyMood = useCallback(
     async (nextMood: Mood) => {
       const nextQuery = pickRandomMoodQuery(moodQueries[nextMood]);
+      void logAppAction("mood.apply", "Mood applied.", {
+        mood: nextMood,
+        query: nextQuery,
+      });
       dispatch({ type: "moodChanged", mood: nextMood });
       dispatch({ type: "queryChanged", query: nextQuery });
       await searchWallpapers(1, nextQuery, state.source, nextMood);
@@ -649,6 +743,9 @@ export function AppStateProvider({ children }: AppStateProviderProps) {
 
   const applyTopic = useCallback(
     async (nextQuery: string) => {
+      void logAppAction("topic.apply", "Topic applied.", {
+        query: nextQuery,
+      });
       dispatch({ type: "queryChanged", query: nextQuery });
       await searchWallpapers(1, nextQuery);
     },
@@ -657,6 +754,11 @@ export function AppStateProvider({ children }: AppStateProviderProps) {
 
   const applyNextFromMood = useCallback(async () => {
     const nextQuery = pickRandomMoodQuery(moodQueries[state.mood]);
+    void logAppAction("mood.next", "Next wallpaper from mood requested.", {
+      mood: state.mood,
+      query: nextQuery,
+      source: state.source,
+    });
     const wallpapers = await runWithStatus("next", () =>
       invoke<Wallpaper[]>("search_wallpapers", {
         query: nextQuery,
@@ -742,9 +844,19 @@ export function AppStateProvider({ children }: AppStateProviderProps) {
 
   const actions = useMemo<AppActions>(
     () => ({
-      setActiveView: (view) =>
-        dispatch({ type: "activeViewChanged", activeView: view }),
-      setQuery: (query) => dispatch({ type: "queryChanged", query }),
+      setActiveView: (view) => {
+        void logAppAction("navigation.view.change", "Active view changed.", {
+          from: state.activeView,
+          to: view,
+        });
+        dispatch({ type: "activeViewChanged", activeView: view });
+      },
+      setQuery: (query) => {
+        void logAppAction("search.query.change", "Search query changed.", {
+          query,
+        });
+        dispatch({ type: "queryChanged", query });
+      },
       searchWallpapers,
       changeSource,
       setWallpaper,
@@ -803,6 +915,7 @@ export function AppStateProvider({ children }: AppStateProviderProps) {
       setWallpaperWithLayout,
       testSupabaseSync,
       toggleAutoChangePause,
+      state.activeView,
     ],
   );
 

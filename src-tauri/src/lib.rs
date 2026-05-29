@@ -1,4 +1,5 @@
 pub mod api;
+pub mod app_log;
 pub mod cache;
 pub mod models;
 pub mod quality;
@@ -9,6 +10,7 @@ pub mod wallpaper;
 use models::{ApiSource, CacheStats, ImportResult, Library, Wallpaper, WallpaperQualityReport};
 use reqwest::Client;
 use serde::{Deserialize, Serialize};
+use serde_json::{json, Value};
 use settings::{
     load_settings_from_path, save_settings_to_path, settings_path, AppSettings, HotkeySettings,
     WallpaperLayoutPreference,
@@ -40,11 +42,34 @@ pub struct AppState {
     settings_path: PathBuf,
     db_path: PathBuf,
     cache_dir: PathBuf,
+    log_path: PathBuf,
     scheduler: Mutex<Option<JoinHandle<()>>>,
     scheduler_paused: Arc<AtomicBool>,
     wallpaper_lock: Arc<Mutex<Option<wallpaper::WallpaperLock>>>,
     startup_wallpaper: Arc<Mutex<Option<wallpaper::WallpaperLock>>>,
     explicit_exit_requested: AtomicBool,
+}
+
+impl AppState {
+    fn log(&self, level: &str, target: &str, action: &str, message: &str, details: Value) {
+        if let Err(error) =
+            app_log::append_event(&self.log_path, level, target, action, message, details)
+        {
+            eprintln!("Could not write app log: {error}");
+        }
+    }
+
+    fn log_backend(&self, action: &str, message: &str, details: Value) {
+        self.log("info", "backend", action, message, details);
+    }
+
+    fn log_backend_warn(&self, action: &str, message: &str, details: Value) {
+        self.log("warn", "backend", action, message, details);
+    }
+
+    fn log_backend_error(&self, action: &str, message: &str, details: Value) {
+        self.log("error", "backend", action, message, details);
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -73,10 +98,119 @@ struct BackupPayload {
     library: Library,
 }
 
+fn settings_log_details(settings: &AppSettings) -> Value {
+    json!({
+        "autoChangeMinutes": settings.auto_change_minutes,
+        "resolution": format!("{:?}", settings.resolution),
+        "cacheLimitMb": settings.cache_limit_mb,
+        "theme": format!("{:?}", settings.theme),
+        "wallpaperLayout": format!("{:?}", settings.wallpaper_layout),
+        "runInBackground": settings.run_in_background,
+        "launchAtStartup": settings.launch_at_startup,
+        "applyToLockScreen": settings.apply_to_lock_screen,
+        "globalHotkeysEnabled": settings.global_hotkeys_enabled,
+        "qualityGuardMode": format!("{:?}", settings.quality_guard_mode),
+        "qualityMinWidth": settings.quality_min_width,
+        "qualityMinHeight": settings.quality_min_height,
+        "allowPortraitWallpapers": settings.allow_portrait_wallpapers,
+        "autoCleanDays": settings.auto_clean_days,
+        "providersConfigured": {
+            "pexels": !settings.api_keys.pexels.is_empty(),
+            "unsplash": !settings.api_keys.unsplash.is_empty(),
+            "pixabay": !settings.api_keys.pixabay.is_empty(),
+            "wallhaven": !settings.api_keys.wallhaven.is_empty(),
+            "deviantart": !settings.api_keys.deviantart.is_empty(),
+        },
+        "supabase": {
+            "enabled": settings.supabase_sync.enabled,
+            "projectConfigured": !settings.supabase_sync.project_url.is_empty(),
+            "anonConfigured": !settings.supabase_sync.anon_key.is_empty(),
+            "useClerkAuth": settings.supabase_sync.use_clerk_auth,
+            "syncIdConfigured": !settings.supabase_sync.sync_id.is_empty(),
+        },
+        "clerk": {
+            "enabled": settings.clerk_auth.enabled,
+            "publicKeyConfigured": !settings.clerk_auth.publishable_key.is_empty(),
+        }
+    })
+}
+
+fn wallpaper_log_details(wallpaper: &Wallpaper) -> Value {
+    json!({
+        "id": &wallpaper.id,
+        "source": &wallpaper.source,
+        "width": wallpaper.width,
+        "height": wallpaper.height,
+        "queryUsed": &wallpaper.query_used,
+        "mood": &wallpaper.mood,
+        "hasLocalPath": wallpaper.local_path.is_some(),
+        "isFavorite": wallpaper.is_favorite,
+    })
+}
+
+fn library_log_details(library: &Library) -> Value {
+    json!({
+        "favorites": library.favorites.len(),
+        "downloaded": library.downloaded.len(),
+        "playlists": library.playlists.len(),
+    })
+}
+
+fn cache_stats_log_details(stats: &CacheStats) -> Value {
+    json!({
+        "bytes": stats.bytes,
+        "files": stats.files,
+    })
+}
+
+fn log_command_error(state: &AppState, action: &str, error: String) -> String {
+    state.log_backend_error(action, "Action failed.", json!({ "error": error }));
+    error
+}
+
+fn log_app_event(app_handle: &tauri::AppHandle, action: &str, message: &str, details: Value) {
+    if let Some(state) = app_handle.try_state::<AppState>() {
+        state.log_backend(action, message, details);
+    }
+}
+
+fn log_app_error(app_handle: &tauri::AppHandle, action: &str, message: &str, details: Value) {
+    if let Some(state) = app_handle.try_state::<AppState>() {
+        state.log_backend_error(action, message, details);
+    }
+}
+
+#[tauri::command]
+fn write_app_log(
+    state: State<'_, AppState>,
+    entry: app_log::FrontendLogEntry,
+) -> Result<(), String> {
+    app_log::append_frontend_entry(&state.log_path, &entry)
+        .map_err(|error| format!("Could not write app log: {error}"))
+}
+
+#[tauri::command]
+fn get_app_log_path(state: State<'_, AppState>) -> String {
+    state.log_path.to_string_lossy().to_string()
+}
+
 #[tauri::command]
 fn get_settings(state: State<'_, AppState>) -> Result<AppSettings, String> {
-    load_settings_from_path(&state.settings_path)
-        .map_err(|error| format!("Could not load settings: {error}"))
+    match load_settings_from_path(&state.settings_path) {
+        Ok(settings) => {
+            state.log_backend(
+                "settings.load",
+                "Settings loaded.",
+                settings_log_details(&settings),
+            );
+            Ok(settings)
+        }
+        Err(error) => Err(log_command_error(
+            state.inner(),
+            "settings.load",
+            format!("Could not load settings: {error}"),
+        )),
+    }
 }
 
 #[tauri::command]
@@ -86,6 +220,11 @@ async fn save_settings(
     settings: AppSettings,
 ) -> Result<AppSettings, String> {
     let settings = settings.sanitized();
+    state.log_backend(
+        "settings.save.start",
+        "Saving settings.",
+        settings_log_details(&settings),
+    );
     validate_hotkey_settings(&settings.hotkeys)?;
     sync_autostart(&app_handle, &settings)?;
     save_settings_to_path(&state.settings_path, &settings)
@@ -93,7 +232,17 @@ async fn save_settings(
     restart_scheduler(state.inner(), settings.auto_change_minutes).await?;
     if let Err(error) = configure_global_hotkeys(&app_handle, &settings) {
         eprintln!("Could not update global hotkeys: {error}");
+        state.log_backend_warn(
+            "hotkeys.configure",
+            "Global hotkeys could not be updated after settings save.",
+            json!({ "error": error.to_string() }),
+        );
     }
+    state.log_backend(
+        "settings.save.success",
+        "Settings saved.",
+        settings_log_details(&settings),
+    );
     Ok(settings)
 }
 
@@ -104,9 +253,14 @@ async fn search_wallpapers(
     page: u32,
     source: ApiSource,
 ) -> Result<Vec<Wallpaper>, String> {
+    state.log_backend(
+        "wallpaper.search.start",
+        "Searching wallpapers.",
+        json!({ "query": &query, "page": page, "source": format!("{:?}", source) }),
+    );
     let settings = load_settings_from_path(&state.settings_path)
         .map_err(|error| format!("Could not load settings: {error}"))?;
-    api::search_wallpapers(
+    let result = api::search_wallpapers(
         &state.client,
         &query,
         page,
@@ -115,7 +269,20 @@ async fn search_wallpapers(
         settings.allow_nsfw_wallhaven,
         settings.resolution,
     )
-    .await
+    .await;
+    match &result {
+        Ok(wallpapers) => state.log_backend(
+            "wallpaper.search.success",
+            "Wallpaper search completed.",
+            json!({ "count": wallpapers.len(), "page": page, "source": format!("{:?}", source) }),
+        ),
+        Err(error) => state.log_backend_error(
+            "wallpaper.search.error",
+            "Wallpaper search failed.",
+            json!({ "error": error }),
+        ),
+    }
+    result
 }
 
 #[tauri::command]
@@ -123,16 +290,34 @@ async fn random_wallpapers(
     state: State<'_, AppState>,
     source: ApiSource,
 ) -> Result<Vec<Wallpaper>, String> {
+    state.log_backend(
+        "wallpaper.random.start",
+        "Loading random wallpapers.",
+        json!({ "source": format!("{:?}", source) }),
+    );
     let settings = load_settings_from_path(&state.settings_path)
         .map_err(|error| format!("Could not load settings: {error}"))?;
-    api::random_wallpapers(
+    let result = api::random_wallpapers(
         &state.client,
         source,
         &settings.api_keys,
         settings.allow_nsfw_wallhaven,
         settings.resolution,
     )
-    .await
+    .await;
+    match &result {
+        Ok(wallpapers) => state.log_backend(
+            "wallpaper.random.success",
+            "Random wallpapers loaded.",
+            json!({ "count": wallpapers.len(), "source": format!("{:?}", source) }),
+        ),
+        Err(error) => state.log_backend_error(
+            "wallpaper.random.error",
+            "Random wallpapers failed.",
+            json!({ "error": error }),
+        ),
+    }
+    result
 }
 
 #[tauri::command]
@@ -140,9 +325,14 @@ async fn set_wallpaper(
     state: State<'_, AppState>,
     wallpaper: Wallpaper,
 ) -> Result<Wallpaper, String> {
+    state.log_backend(
+        "wallpaper.apply.start",
+        "Applying wallpaper.",
+        wallpaper_log_details(&wallpaper),
+    );
     let settings = load_settings_from_path(&state.settings_path)
         .map_err(|error| format!("Could not load settings: {error}"))?;
-    let wallpaper = set_wallpaper_inner(
+    let result = set_wallpaper_inner(
         &state.client,
         &state.cache_dir,
         &state.db_path,
@@ -150,8 +340,19 @@ async fn set_wallpaper(
         &settings,
         settings.wallpaper_layout,
     )
-    .await?;
+    .await;
+    let wallpaper = match result {
+        Ok(wallpaper) => wallpaper,
+        Err(error) => {
+            return Err(log_command_error(state.inner(), "wallpaper.apply", error));
+        }
+    };
     remember_locked_wallpaper(&state.wallpaper_lock, &wallpaper, settings.wallpaper_layout).await;
+    state.log_backend(
+        "wallpaper.apply.success",
+        "Wallpaper applied.",
+        wallpaper_log_details(&wallpaper),
+    );
     Ok(wallpaper)
 }
 
@@ -161,9 +362,14 @@ async fn set_wallpaper_with_layout(
     wallpaper: Wallpaper,
     layout: WallpaperLayoutPreference,
 ) -> Result<Wallpaper, String> {
+    state.log_backend(
+        "wallpaper.apply.start",
+        "Applying wallpaper with layout.",
+        json!({ "wallpaper": wallpaper_log_details(&wallpaper), "layout": format!("{:?}", layout) }),
+    );
     let settings = load_settings_from_path(&state.settings_path)
         .map_err(|error| format!("Could not load settings: {error}"))?;
-    let wallpaper = set_wallpaper_inner(
+    let result = set_wallpaper_inner(
         &state.client,
         &state.cache_dir,
         &state.db_path,
@@ -171,8 +377,19 @@ async fn set_wallpaper_with_layout(
         &settings,
         layout,
     )
-    .await?;
+    .await;
+    let wallpaper = match result {
+        Ok(wallpaper) => wallpaper,
+        Err(error) => {
+            return Err(log_command_error(state.inner(), "wallpaper.apply", error));
+        }
+    };
     remember_locked_wallpaper(&state.wallpaper_lock, &wallpaper, layout).await;
+    state.log_backend(
+        "wallpaper.apply.success",
+        "Wallpaper applied with layout.",
+        json!({ "wallpaper": wallpaper_log_details(&wallpaper), "layout": format!("{:?}", layout) }),
+    );
     Ok(wallpaper)
 }
 
@@ -183,7 +400,17 @@ fn assess_wallpaper_quality(
 ) -> Result<WallpaperQualityReport, String> {
     let settings = load_settings_from_path(&state.settings_path)
         .map_err(|error| format!("Could not load settings: {error}"))?;
-    Ok(quality::assess_wallpaper_quality(&wallpaper, &settings))
+    let report = quality::assess_wallpaper_quality(&wallpaper, &settings);
+    state.log_backend(
+        "quality.assess",
+        "Wallpaper quality assessed.",
+        json!({
+            "wallpaper": wallpaper_log_details(&wallpaper),
+            "ok": report.ok,
+            "warnings": &report.warnings,
+        }),
+    );
+    Ok(report)
 }
 
 #[tauri::command]
@@ -191,6 +418,11 @@ fn set_lock_screen_wallpaper(
     state: State<'_, AppState>,
     wallpaper: Wallpaper,
 ) -> Result<(), String> {
+    state.log_backend(
+        "wallpaper.lock_screen.start",
+        "Setting lock-screen wallpaper.",
+        wallpaper_log_details(&wallpaper),
+    );
     let settings = load_settings_from_path(&state.settings_path)
         .map_err(|error| format!("Could not load settings: {error}"))?;
     let path = wallpaper
@@ -206,12 +438,38 @@ fn set_lock_screen_wallpaper(
         .ok_or_else(|| {
             "Download or apply this wallpaper before setting the lock screen.".to_string()
         })?;
-    wallpaper::set_lock_screen_wallpaper(Path::new(path), settings.wallpaper_layout)
+    let result = wallpaper::set_lock_screen_wallpaper(Path::new(path), settings.wallpaper_layout);
+    match &result {
+        Ok(()) => state.log_backend(
+            "wallpaper.lock_screen.success",
+            "Lock-screen wallpaper updated.",
+            wallpaper_log_details(&wallpaper),
+        ),
+        Err(error) => state.log_backend_error(
+            "wallpaper.lock_screen.error",
+            "Lock-screen wallpaper update failed.",
+            json!({ "error": error }),
+        ),
+    }
+    result
 }
 
 #[tauri::command]
 fn save_favorite(state: State<'_, AppState>, wallpaper: Wallpaper) -> Result<(), String> {
-    cache::save_favorite(&state.db_path, &wallpaper)
+    let result = cache::save_favorite(&state.db_path, &wallpaper);
+    match &result {
+        Ok(()) => state.log_backend(
+            "library.favorite.save",
+            "Wallpaper saved as favorite.",
+            wallpaper_log_details(&wallpaper),
+        ),
+        Err(error) => state.log_backend_error(
+            "library.favorite.save",
+            "Saving favorite failed.",
+            json!({ "error": error }),
+        ),
+    }
+    result
 }
 
 #[tauri::command]
@@ -220,46 +478,120 @@ fn set_favorite(
     wallpaper: Wallpaper,
     favorite: bool,
 ) -> Result<Library, String> {
+    state.log_backend(
+        "library.favorite.toggle",
+        "Favorite status changed.",
+        json!({ "wallpaper": wallpaper_log_details(&wallpaper), "favorite": favorite }),
+    );
     cache::set_favorite(&state.db_path, &wallpaper, favorite)?;
-    cache::list_library(&state.db_path)
+    let library = cache::list_library(&state.db_path)?;
+    state.log_backend(
+        "library.favorite.toggle.success",
+        "Favorite status saved.",
+        library_log_details(&library),
+    );
+    Ok(library)
 }
 
 #[tauri::command]
 fn list_library(state: State<'_, AppState>) -> Result<Library, String> {
-    cache::list_library(&state.db_path)
+    let library = cache::list_library(&state.db_path)?;
+    state.log_backend(
+        "library.list",
+        "Library loaded.",
+        library_log_details(&library),
+    );
+    Ok(library)
 }
 
 #[tauri::command]
 fn cache_stats(state: State<'_, AppState>) -> Result<CacheStats, String> {
-    cache::cache_stats(&state.cache_dir)
+    let stats = cache::cache_stats(&state.cache_dir)?;
+    state.log_backend(
+        "cache.stats",
+        "Cache stats loaded.",
+        cache_stats_log_details(&stats),
+    );
+    Ok(stats)
 }
 
 #[tauri::command]
 fn clear_cache(state: State<'_, AppState>) -> Result<CacheStats, String> {
+    state.log_backend("cache.clear.start", "Clearing wallpaper cache.", json!({}));
     cache::clear_cache(&state.cache_dir, &state.db_path)?;
-    cache::cache_stats(&state.cache_dir)
+    let stats = cache::cache_stats(&state.cache_dir)?;
+    state.log_backend(
+        "cache.clear.success",
+        "Wallpaper cache cleared.",
+        cache_stats_log_details(&stats),
+    );
+    Ok(stats)
 }
 
 #[tauri::command]
 fn clear_library(state: State<'_, AppState>) -> Result<Library, String> {
+    state.log_backend(
+        "library.clear.start",
+        "Clearing wallpaper library.",
+        json!({}),
+    );
     cache::clear_library(&state.db_path, &state.cache_dir)?;
-    cache::list_library(&state.db_path)
+    let library = cache::list_library(&state.db_path)?;
+    state.log_backend(
+        "library.clear.success",
+        "Wallpaper library cleared.",
+        library_log_details(&library),
+    );
+    Ok(library)
 }
 
 #[tauri::command]
 fn delete_wallpaper(state: State<'_, AppState>, id: String) -> Result<Library, String> {
+    state.log_backend(
+        "library.wallpaper.delete.start",
+        "Deleting wallpaper.",
+        json!({ "id": &id }),
+    );
     cache::delete_wallpaper(&state.db_path, &state.cache_dir, &id)?;
-    cache::list_library(&state.db_path)
+    let library = cache::list_library(&state.db_path)?;
+    state.log_backend(
+        "library.wallpaper.delete.success",
+        "Wallpaper deleted.",
+        library_log_details(&library),
+    );
+    Ok(library)
 }
 
 #[tauri::command]
 fn create_playlist(state: State<'_, AppState>, name: String) -> Result<Library, String> {
-    cache::create_playlist(&state.db_path, &name)
+    state.log_backend(
+        "library.playlist.create.start",
+        "Creating playlist.",
+        json!({ "name": &name }),
+    );
+    let library = cache::create_playlist(&state.db_path, &name)?;
+    state.log_backend(
+        "library.playlist.create.success",
+        "Playlist created.",
+        library_log_details(&library),
+    );
+    Ok(library)
 }
 
 #[tauri::command]
 fn delete_playlist(state: State<'_, AppState>, playlist_id: String) -> Result<Library, String> {
-    cache::delete_playlist(&state.db_path, &playlist_id)
+    state.log_backend(
+        "library.playlist.delete.start",
+        "Deleting playlist.",
+        json!({ "playlistId": &playlist_id }),
+    );
+    let library = cache::delete_playlist(&state.db_path, &playlist_id)?;
+    state.log_backend(
+        "library.playlist.delete.success",
+        "Playlist deleted.",
+        library_log_details(&library),
+    );
+    Ok(library)
 }
 
 #[tauri::command]
@@ -268,7 +600,18 @@ fn add_wallpaper_to_playlist(
     playlist_id: String,
     wallpaper: Wallpaper,
 ) -> Result<Library, String> {
-    cache::add_wallpaper_to_playlist(&state.db_path, &playlist_id, &wallpaper)
+    state.log_backend(
+        "library.playlist.add_wallpaper.start",
+        "Adding wallpaper to playlist.",
+        json!({ "playlistId": &playlist_id, "wallpaper": wallpaper_log_details(&wallpaper) }),
+    );
+    let library = cache::add_wallpaper_to_playlist(&state.db_path, &playlist_id, &wallpaper)?;
+    state.log_backend(
+        "library.playlist.add_wallpaper.success",
+        "Wallpaper added to playlist.",
+        library_log_details(&library),
+    );
+    Ok(library)
 }
 
 #[tauri::command]
@@ -277,7 +620,19 @@ fn remove_wallpaper_from_playlist(
     playlist_id: String,
     wallpaper_id: String,
 ) -> Result<Library, String> {
-    cache::remove_wallpaper_from_playlist(&state.db_path, &playlist_id, &wallpaper_id)
+    state.log_backend(
+        "library.playlist.remove_wallpaper.start",
+        "Removing wallpaper from playlist.",
+        json!({ "playlistId": &playlist_id, "wallpaperId": &wallpaper_id }),
+    );
+    let library =
+        cache::remove_wallpaper_from_playlist(&state.db_path, &playlist_id, &wallpaper_id)?;
+    state.log_backend(
+        "library.playlist.remove_wallpaper.success",
+        "Wallpaper removed from playlist.",
+        library_log_details(&library),
+    );
+    Ok(library)
 }
 
 #[tauri::command]
@@ -285,11 +640,35 @@ fn import_local_folder(
     state: State<'_, AppState>,
     folder_path: String,
 ) -> Result<ImportResult, String> {
-    cache::import_local_folder(&state.db_path, &state.cache_dir, Path::new(&folder_path))
+    state.log_backend(
+        "library.import_folder.start",
+        "Importing local wallpaper folder.",
+        json!({ "folderPath": &folder_path }),
+    );
+    let result =
+        cache::import_local_folder(&state.db_path, &state.cache_dir, Path::new(&folder_path));
+    match &result {
+        Ok(import) => state.log_backend(
+            "library.import_folder.success",
+            "Local wallpaper folder imported.",
+            json!({ "imported": import.imported, "skipped": import.skipped }),
+        ),
+        Err(error) => state.log_backend_error(
+            "library.import_folder.error",
+            "Local wallpaper folder import failed.",
+            json!({ "error": error }),
+        ),
+    }
+    result
 }
 
 #[tauri::command]
 fn run_auto_cleanup(state: State<'_, AppState>) -> Result<CacheStats, String> {
+    state.log_backend(
+        "cache.auto_cleanup.start",
+        "Running auto-cleanup.",
+        json!({}),
+    );
     let settings = load_settings_from_path(&state.settings_path)
         .map_err(|error| format!("Could not load settings: {error}"))?;
     cache::cleanup_old_downloads(
@@ -298,11 +677,22 @@ fn run_auto_cleanup(state: State<'_, AppState>) -> Result<CacheStats, String> {
         settings.auto_clean_days,
         settings.auto_clean_keep_favorites,
     )?;
-    cache::cache_stats(&state.cache_dir)
+    let stats = cache::cache_stats(&state.cache_dir)?;
+    state.log_backend(
+        "cache.auto_cleanup.success",
+        "Auto-cleanup complete.",
+        cache_stats_log_details(&stats),
+    );
+    Ok(stats)
 }
 
 #[tauri::command]
 fn export_backup(state: State<'_, AppState>, target_path: String) -> Result<String, String> {
+    state.log_backend(
+        "backup.export.start",
+        "Exporting backup.",
+        json!({ "targetPath": &target_path }),
+    );
     let settings = load_settings_from_path(&state.settings_path)
         .map_err(|error| format!("Could not load settings: {error}"))?;
     let payload = BackupPayload {
@@ -321,7 +711,13 @@ fn export_backup(state: State<'_, AppState>, target_path: String) -> Result<Stri
             .map_err(|error| format!("Could not serialize backup: {error}"))?,
     )
     .map_err(|error| format!("Could not write backup: {error}"))?;
-    Ok(target.to_string_lossy().to_string())
+    let target = target.to_string_lossy().to_string();
+    state.log_backend(
+        "backup.export.success",
+        "Backup exported.",
+        json!({ "targetPath": &target }),
+    );
+    Ok(target)
 }
 
 #[tauri::command]
@@ -330,6 +726,11 @@ async fn import_backup(
     state: State<'_, AppState>,
     source_path: String,
 ) -> Result<Library, String> {
+    state.log_backend(
+        "backup.import.start",
+        "Importing backup.",
+        json!({ "sourcePath": &source_path }),
+    );
     let raw = fs::read_to_string(&source_path)
         .map_err(|error| format!("Could not read backup: {error}"))?;
     let payload: BackupPayload =
@@ -349,7 +750,13 @@ async fn import_backup(
     }
     cache::restore_wallpaper_metadata(&state.db_path, &wallpapers)?;
     cache::restore_playlists(&state.db_path, &payload.library.playlists)?;
-    cache::list_library(&state.db_path)
+    let library = cache::list_library(&state.db_path)?;
+    state.log_backend(
+        "backup.import.success",
+        "Backup imported.",
+        library_log_details(&library),
+    );
+    Ok(library)
 }
 
 #[tauri::command]
@@ -357,14 +764,32 @@ async fn test_supabase_sync(
     state: State<'_, AppState>,
     auth_context: Option<sync::SyncAuthContext>,
 ) -> Result<sync::SupabaseSyncStatus, String> {
+    state.log_backend(
+        "sync.test.start",
+        "Testing Supabase sync connection.",
+        json!({ "hasAuthContext": auth_context.is_some() }),
+    );
     let settings = load_settings_from_path(&state.settings_path)
         .map_err(|error| format!("Could not load settings: {error}"))?;
-    sync::test_supabase_connection(
+    let result = sync::test_supabase_connection(
         &state.client,
         &settings.supabase_sync,
         auth_context.as_ref(),
     )
-    .await
+    .await;
+    match &result {
+        Ok(status) => state.log_backend(
+            "sync.test.success",
+            "Supabase sync test finished.",
+            json!({ "connected": status.connected, "message": &status.message }),
+        ),
+        Err(error) => state.log_backend_error(
+            "sync.test.error",
+            "Supabase sync test failed.",
+            json!({ "error": error }),
+        ),
+    }
+    result
 }
 
 #[tauri::command]
@@ -372,17 +797,39 @@ async fn push_supabase_sync(
     state: State<'_, AppState>,
     auth_context: Option<sync::SyncAuthContext>,
 ) -> Result<sync::SupabaseSyncStatus, String> {
+    state.log_backend(
+        "sync.push.start",
+        "Pushing sync snapshot.",
+        json!({ "hasAuthContext": auth_context.is_some() }),
+    );
     let settings = load_settings_from_path(&state.settings_path)
         .map_err(|error| format!("Could not load settings: {error}"))?;
     let library = cache::list_library(&state.db_path)?;
     let payload = sync::build_sync_payload(&settings, &library);
-    sync::push_supabase_sync(
+    let result = sync::push_supabase_sync(
         &state.client,
         &settings.supabase_sync,
         auth_context.as_ref(),
         &payload,
     )
-    .await
+    .await;
+    match &result {
+        Ok(status) => state.log_backend(
+            "sync.push.success",
+            "Sync snapshot pushed.",
+            json!({
+                "connected": status.connected,
+                "message": &status.message,
+                "library": library_log_details(&library),
+            }),
+        ),
+        Err(error) => state.log_backend_error(
+            "sync.push.error",
+            "Sync snapshot push failed.",
+            json!({ "error": error }),
+        ),
+    }
+    result
 }
 
 #[tauri::command]
@@ -391,6 +838,11 @@ async fn pull_supabase_sync(
     state: State<'_, AppState>,
     auth_context: Option<sync::SyncAuthContext>,
 ) -> Result<sync::SupabaseSyncApplyResult, String> {
+    state.log_backend(
+        "sync.pull.start",
+        "Pulling sync snapshot.",
+        json!({ "hasAuthContext": auth_context.is_some() }),
+    );
     let current_settings = load_settings_from_path(&state.settings_path)
         .map_err(|error| format!("Could not load settings: {error}"))?;
     let (payload, status) = sync::pull_supabase_sync(
@@ -415,6 +867,15 @@ async fn pull_supabase_sync(
     cache::restore_playlists(&state.db_path, &library.playlists)?;
     let library = cache::list_library(&state.db_path)?;
 
+    state.log_backend(
+        "sync.pull.success",
+        "Sync snapshot pulled and applied.",
+        json!({
+            "connected": status.connected,
+            "message": &status.message,
+            "library": library_log_details(&library),
+        }),
+    );
     Ok(sync::SupabaseSyncApplyResult {
         status,
         settings,
@@ -424,16 +885,36 @@ async fn pull_supabase_sync(
 
 #[tauri::command]
 async fn apply_random_wallpaper(state: State<'_, AppState>) -> Result<Wallpaper, String> {
-    let wallpaper = apply_random_wallpaper_inner(
+    state.log_backend(
+        "wallpaper.apply_random.start",
+        "Applying random wallpaper.",
+        json!({}),
+    );
+    let result = apply_random_wallpaper_inner(
         state.client.clone(),
         state.settings_path.clone(),
         state.db_path.clone(),
         state.cache_dir.clone(),
     )
-    .await?;
+    .await;
+    let wallpaper = match result {
+        Ok(wallpaper) => wallpaper,
+        Err(error) => {
+            return Err(log_command_error(
+                state.inner(),
+                "wallpaper.apply_random",
+                error,
+            ));
+        }
+    };
     let settings = load_settings_from_path(&state.settings_path)
         .map_err(|error| format!("Could not load settings: {error}"))?;
     remember_locked_wallpaper(&state.wallpaper_lock, &wallpaper, settings.wallpaper_layout).await;
+    state.log_backend(
+        "wallpaper.apply_random.success",
+        "Random wallpaper applied.",
+        wallpaper_log_details(&wallpaper),
+    );
     Ok(wallpaper)
 }
 
@@ -446,15 +927,36 @@ async fn apply_next_wallpaper(state: State<'_, AppState>) -> Result<Wallpaper, S
 fn toggle_auto_change_pause(state: State<'_, AppState>) -> Result<bool, String> {
     let paused = !state.scheduler_paused.load(Ordering::SeqCst);
     state.scheduler_paused.store(paused, Ordering::SeqCst);
+    state.log_backend(
+        "scheduler.pause_toggle",
+        "Auto-change pause toggled.",
+        json!({ "paused": paused }),
+    );
     Ok(paused)
 }
 
 #[tauri::command]
-fn pause_global_hotkeys_for_capture(app_handle: tauri::AppHandle) -> Result<(), String> {
-    app_handle
+fn pause_global_hotkeys_for_capture(
+    app_handle: tauri::AppHandle,
+    state: State<'_, AppState>,
+) -> Result<(), String> {
+    state.log_backend(
+        "hotkeys.capture.pause",
+        "Pausing global hotkeys for capture.",
+        json!({}),
+    );
+    let result = app_handle
         .global_shortcut()
         .unregister_all()
-        .map_err(|error| format!("Could not pause global hotkeys: {error}"))
+        .map_err(|error| format!("Could not pause global hotkeys: {error}"));
+    if let Err(error) = &result {
+        state.log_backend_error(
+            "hotkeys.capture.pause",
+            "Could not pause global hotkeys for capture.",
+            json!({ "error": error }),
+        );
+    }
+    result
 }
 
 #[tauri::command]
@@ -464,7 +966,20 @@ fn restore_global_hotkeys_after_capture(
 ) -> Result<(), String> {
     let settings = load_settings_from_path(&state.settings_path)
         .map_err(|error| format!("Could not load settings: {error}"))?;
-    configure_global_hotkeys(&app_handle, &settings)
+    let result = configure_global_hotkeys(&app_handle, &settings);
+    match &result {
+        Ok(()) => state.log_backend(
+            "hotkeys.capture.restore",
+            "Global hotkeys restored after capture.",
+            json!({}),
+        ),
+        Err(error) => state.log_backend_error(
+            "hotkeys.capture.restore",
+            "Could not restore global hotkeys after capture.",
+            json!({ "error": error }),
+        ),
+    }
+    result
 }
 
 async fn set_wallpaper_inner(
@@ -589,9 +1104,19 @@ async fn restart_scheduler(state: &AppState, interval_minutes: u64) -> Result<()
     let mut scheduler = state.scheduler.lock().await;
     if let Some(handle) = scheduler.take() {
         handle.abort();
+        state.log_backend(
+            "scheduler.stop",
+            "Existing auto-change scheduler stopped.",
+            json!({}),
+        );
     }
 
     let Some(interval) = scheduler_interval(interval_minutes) else {
+        state.log_backend(
+            "scheduler.disabled",
+            "Auto-change scheduler disabled.",
+            json!({ "intervalMinutes": interval_minutes }),
+        );
         return Ok(());
     };
 
@@ -599,8 +1124,14 @@ async fn restart_scheduler(state: &AppState, interval_minutes: u64) -> Result<()
     let settings_path = state.settings_path.clone();
     let db_path = state.db_path.clone();
     let cache_dir = state.cache_dir.clone();
+    let log_path = state.log_path.clone();
     let wallpaper_lock = state.wallpaper_lock.clone();
     let scheduler_paused = state.scheduler_paused.clone();
+    state.log_backend(
+        "scheduler.start",
+        "Auto-change scheduler started.",
+        json!({ "intervalMinutes": interval_minutes }),
+    );
 
     *scheduler = Some(tauri::async_runtime::spawn(async move {
         let first_tick = tokio::time::Instant::from_std(scheduler_first_tick_at(
@@ -611,9 +1142,25 @@ async fn restart_scheduler(state: &AppState, interval_minutes: u64) -> Result<()
         loop {
             timer.tick().await;
             if scheduler_paused.load(Ordering::SeqCst) {
+                let _ = app_log::append_event(
+                    &log_path,
+                    "info",
+                    "backend",
+                    "scheduler.tick.skipped",
+                    "Auto-change tick skipped while paused.",
+                    json!({}),
+                );
                 continue;
             }
-            if let Ok(wallpaper) = apply_random_wallpaper_inner(
+            let _ = app_log::append_event(
+                &log_path,
+                "info",
+                "backend",
+                "scheduler.tick",
+                "Auto-change scheduler tick started.",
+                json!({}),
+            );
+            match apply_random_wallpaper_inner(
                 client.clone(),
                 settings_path.clone(),
                 db_path.clone(),
@@ -621,13 +1168,33 @@ async fn restart_scheduler(state: &AppState, interval_minutes: u64) -> Result<()
             )
             .await
             {
-                if let Ok(settings) = load_settings_from_path(&settings_path) {
-                    remember_locked_wallpaper(
-                        &wallpaper_lock,
-                        &wallpaper,
-                        settings.wallpaper_layout,
-                    )
-                    .await;
+                Ok(wallpaper) => {
+                    let _ = app_log::append_event(
+                        &log_path,
+                        "info",
+                        "backend",
+                        "scheduler.tick.success",
+                        "Auto-change wallpaper applied.",
+                        wallpaper_log_details(&wallpaper),
+                    );
+                    if let Ok(settings) = load_settings_from_path(&settings_path) {
+                        remember_locked_wallpaper(
+                            &wallpaper_lock,
+                            &wallpaper,
+                            settings.wallpaper_layout,
+                        )
+                        .await;
+                    }
+                }
+                Err(error) => {
+                    let _ = app_log::append_event(
+                        &log_path,
+                        "error",
+                        "backend",
+                        "scheduler.tick.error",
+                        "Auto-change scheduler failed to apply wallpaper.",
+                        json!({ "error": error }),
+                    );
                 }
             }
         }
@@ -778,6 +1345,7 @@ fn restore_startup_wallpaper_before_exit(app_handle: &tauri::AppHandle) {
 }
 
 fn show_main_window(app_handle: &tauri::AppHandle) {
+    log_app_event(app_handle, "window.show", "Showing main window.", json!({}));
     apply_activation_mode(app_handle, activation_mode_for_visible_window(true));
     if let Some(window) = app_handle.get_webview_window("main") {
         let _ = window.unminimize();
@@ -787,6 +1355,12 @@ fn show_main_window(app_handle: &tauri::AppHandle) {
 }
 
 fn hide_main_window(app_handle: &tauri::AppHandle) {
+    log_app_event(
+        app_handle,
+        "window.hide",
+        "Hiding main window to background.",
+        json!({}),
+    );
     if let Some(window) = app_handle.get_webview_window("main") {
         let _ = window.hide();
     }
@@ -821,6 +1395,12 @@ fn hide_minimized_window_to_tray(app_handle: &tauri::AppHandle, label: &str) {
 
     if let Some(window) = app_handle.get_webview_window(label) {
         if window.is_minimized().unwrap_or(false) {
+            log_app_event(
+                app_handle,
+                "window.minimize_to_tray",
+                "Window minimized to tray.",
+                json!({ "label": label }),
+            );
             let _ = window.hide();
         }
     }
@@ -838,10 +1418,22 @@ fn close_window_or_background_service(
 
     match window_close_action(&settings) {
         WindowCloseAction::HideToBackground => {
+            log_app_event(
+                app_handle,
+                "window.close.background",
+                "Close requested; app kept running in background.",
+                json!({ "label": _label }),
+            );
             api.prevent_close();
             hide_main_window(app_handle);
         }
         WindowCloseAction::Exit => {
+            log_app_event(
+                app_handle,
+                "window.close.exit",
+                "Close requested; app exiting.",
+                json!({ "label": _label }),
+            );
             app_handle.exit(0);
         }
     }
@@ -851,6 +1443,12 @@ fn request_explicit_exit(app_handle: &tauri::AppHandle) {
     if let Some(state) = app_handle.try_state::<AppState>() {
         state.explicit_exit_requested.store(true, Ordering::SeqCst);
     }
+    log_app_event(
+        app_handle,
+        "app.quit.request",
+        "Explicit quit requested.",
+        json!({}),
+    );
     app_handle.exit(0);
 }
 
@@ -863,10 +1461,22 @@ fn handle_exit_requested(app_handle: &tauri::AppHandle, api: &tauri::ExitRequest
 
     match app_exit_action(&settings, explicit_exit) {
         AppExitAction::KeepRunningInBackground => {
+            log_app_event(
+                app_handle,
+                "app.exit.background",
+                "Exit requested; app kept running in background.",
+                json!({ "explicitExit": explicit_exit }),
+            );
             api.prevent_exit();
             hide_main_window(app_handle);
         }
         AppExitAction::ExitProcess => {
+            log_app_event(
+                app_handle,
+                "app.exit.process",
+                "App process exiting.",
+                json!({ "explicitExit": explicit_exit }),
+            );
             restore_startup_wallpaper_before_exit(app_handle);
         }
     }
@@ -876,19 +1486,48 @@ fn apply_next_from_app_handle(app_handle: &tauri::AppHandle) {
     let Some(state) = app_handle.try_state::<AppState>() else {
         return;
     };
+    state.log_backend(
+        "quick_action.next.start",
+        "Quick action requested next wallpaper.",
+        json!({}),
+    );
     let client = state.client.clone();
     let settings_path = state.settings_path.clone();
     let db_path = state.db_path.clone();
     let cache_dir = state.cache_dir.clone();
+    let log_path = state.log_path.clone();
     let wallpaper_lock = state.wallpaper_lock.clone();
 
     tauri::async_runtime::spawn(async move {
-        if let Ok(wallpaper) =
-            apply_random_wallpaper_inner(client, settings_path.clone(), db_path, cache_dir).await
+        match apply_random_wallpaper_inner(client, settings_path.clone(), db_path, cache_dir).await
         {
-            if let Ok(settings) = load_settings_from_path(&settings_path) {
-                remember_locked_wallpaper(&wallpaper_lock, &wallpaper, settings.wallpaper_layout)
+            Ok(wallpaper) => {
+                let _ = app_log::append_event(
+                    &log_path,
+                    "info",
+                    "backend",
+                    "quick_action.next.success",
+                    "Quick action applied next wallpaper.",
+                    wallpaper_log_details(&wallpaper),
+                );
+                if let Ok(settings) = load_settings_from_path(&settings_path) {
+                    remember_locked_wallpaper(
+                        &wallpaper_lock,
+                        &wallpaper,
+                        settings.wallpaper_layout,
+                    )
                     .await;
+                }
+            }
+            Err(error) => {
+                let _ = app_log::append_event(
+                    &log_path,
+                    "error",
+                    "backend",
+                    "quick_action.next.error",
+                    "Quick action failed to apply next wallpaper.",
+                    json!({ "error": error }),
+                );
             }
         }
     });
@@ -900,6 +1539,17 @@ fn favorite_current_from_app_handle(app_handle: &tauri::AppHandle) {
     };
     if let Ok(Some(wallpaper)) = cache::last_used_wallpaper(&state.db_path) {
         let _ = cache::set_favorite(&state.db_path, &wallpaper, true);
+        state.log_backend(
+            "quick_action.favorite_current",
+            "Quick action favorited current wallpaper.",
+            wallpaper_log_details(&wallpaper),
+        );
+    } else {
+        state.log_backend_warn(
+            "quick_action.favorite_current",
+            "Quick action could not find a current wallpaper to favorite.",
+            json!({}),
+        );
     }
 }
 
@@ -909,6 +1559,11 @@ fn toggle_scheduler_pause_from_app_handle(app_handle: &tauri::AppHandle) {
     };
     let paused = !state.scheduler_paused.load(Ordering::SeqCst);
     state.scheduler_paused.store(paused, Ordering::SeqCst);
+    state.log_backend(
+        "quick_action.pause_toggle",
+        "Quick action toggled auto-change pause.",
+        json!({ "paused": paused }),
+    );
 }
 
 fn tray_menu_items() -> [(&'static str, &'static str); 5] {
@@ -1000,9 +1655,30 @@ fn handle_global_hotkey(app_handle: &tauri::AppHandle, shortcut: &Shortcut) {
     }
 
     match global_hotkey_action(shortcut, &settings.hotkeys) {
-        Some(HOTKEY_NEXT_ID) => apply_next_from_app_handle(app_handle),
-        Some(HOTKEY_PAUSE_ID) => toggle_scheduler_pause_from_app_handle(app_handle),
-        Some(HOTKEY_FAVORITE_ID) => favorite_current_from_app_handle(app_handle),
+        Some(HOTKEY_NEXT_ID) => {
+            state.log_backend(
+                "hotkey.next",
+                "Global hotkey triggered next wallpaper.",
+                json!({ "shortcut": format!("{:?}", shortcut) }),
+            );
+            apply_next_from_app_handle(app_handle);
+        }
+        Some(HOTKEY_PAUSE_ID) => {
+            state.log_backend(
+                "hotkey.pause",
+                "Global hotkey toggled auto-change pause.",
+                json!({ "shortcut": format!("{:?}", shortcut) }),
+            );
+            toggle_scheduler_pause_from_app_handle(app_handle);
+        }
+        Some(HOTKEY_FAVORITE_ID) => {
+            state.log_backend(
+                "hotkey.favorite_current",
+                "Global hotkey favorited current wallpaper.",
+                json!({ "shortcut": format!("{:?}", shortcut) }),
+            );
+            favorite_current_from_app_handle(app_handle);
+        }
         _ => {}
     }
 }
@@ -1034,11 +1710,51 @@ fn setup_tray(app: &tauri::App) -> Result<(), Box<dyn std::error::Error>> {
         .tooltip("Wallpaper Engine")
         .show_menu_on_left_click(true)
         .on_menu_event(|app_handle, event| match event.id().as_ref() {
-            TRAY_OPEN_ID => show_main_window(app_handle),
-            TRAY_NEXT_ID => apply_next_from_app_handle(app_handle),
-            TRAY_PAUSE_ID => toggle_scheduler_pause_from_app_handle(app_handle),
-            TRAY_FAVORITE_ID => favorite_current_from_app_handle(app_handle),
-            TRAY_QUIT_ID => request_explicit_exit(app_handle),
+            TRAY_OPEN_ID => {
+                log_app_event(
+                    app_handle,
+                    "tray.open",
+                    "Tray menu requested main window.",
+                    json!({}),
+                );
+                show_main_window(app_handle);
+            }
+            TRAY_NEXT_ID => {
+                log_app_event(
+                    app_handle,
+                    "tray.next",
+                    "Tray menu requested next wallpaper.",
+                    json!({}),
+                );
+                apply_next_from_app_handle(app_handle);
+            }
+            TRAY_PAUSE_ID => {
+                log_app_event(
+                    app_handle,
+                    "tray.pause",
+                    "Tray menu toggled auto-change pause.",
+                    json!({}),
+                );
+                toggle_scheduler_pause_from_app_handle(app_handle);
+            }
+            TRAY_FAVORITE_ID => {
+                log_app_event(
+                    app_handle,
+                    "tray.favorite_current",
+                    "Tray menu favorited current wallpaper.",
+                    json!({}),
+                );
+                favorite_current_from_app_handle(app_handle);
+            }
+            TRAY_QUIT_ID => {
+                log_app_event(
+                    app_handle,
+                    "tray.quit",
+                    "Tray menu requested quit.",
+                    json!({}),
+                );
+                request_explicit_exit(app_handle);
+            }
             _ => {}
         });
 
@@ -1067,6 +1783,12 @@ pub fn run() {
     {
         builder = builder.plugin(tauri_plugin_single_instance::init(
             |app_handle, _argv, _cwd| {
+                log_app_event(
+                    app_handle,
+                    "app.single_instance",
+                    "Existing app instance received a second launch.",
+                    json!({}),
+                );
                 show_main_window(app_handle);
             },
         ));
@@ -1084,15 +1806,32 @@ pub fn run() {
             let config_dir = app.path().app_config_dir()?;
             let data_dir = app.path().app_data_dir()?;
             let cache_dir = app.path().app_cache_dir()?.join("wallpapers");
+            let log_path = app_log::log_path(&data_dir);
             fs::create_dir_all(&config_dir)?;
             fs::create_dir_all(&data_dir)?;
             fs::create_dir_all(&cache_dir)?;
+            let _ = app_log::append_event(
+                &log_path,
+                "info",
+                "backend",
+                "app.startup",
+                "Wallpaper Engine startup began.",
+                json!({ "logPath": log_path.to_string_lossy() }),
+            );
 
             #[cfg(any(target_os = "linux", all(debug_assertions, windows)))]
             {
                 use tauri_plugin_deep_link::DeepLinkExt;
                 if let Err(error) = app.deep_link().register_all() {
                     eprintln!("Could not register deep links: {error}");
+                    let _ = app_log::append_event(
+                        &log_path,
+                        "error",
+                        "backend",
+                        "deep_link.register",
+                        "Could not register deep links.",
+                        json!({ "error": error.to_string() }),
+                    );
                 }
             }
 
@@ -1118,6 +1857,7 @@ pub fn run() {
                 settings_path,
                 db_path,
                 cache_dir,
+                log_path,
                 scheduler: Mutex::new(None),
                 scheduler_paused: Arc::new(AtomicBool::new(false)),
                 wallpaper_lock,
@@ -1126,9 +1866,21 @@ pub fn run() {
             });
             if let Err(error) = setup_global_hotkeys(app) {
                 eprintln!("Could not register global hotkeys: {error}");
+                log_app_error(
+                    app.handle(),
+                    "hotkeys.plugin",
+                    "Could not register global hotkey plugin.",
+                    json!({ "error": error.to_string() }),
+                );
             }
             if let Err(error) = configure_global_hotkeys(app.handle(), &settings) {
                 eprintln!("Could not configure global hotkeys: {error}");
+                log_app_error(
+                    app.handle(),
+                    "hotkeys.configure",
+                    "Could not configure global hotkeys.",
+                    json!({ "error": error.to_string() }),
+                );
             }
             if let Some(interval) = startup_interval {
                 let state = app.state::<AppState>();
@@ -1139,6 +1891,12 @@ pub fn run() {
                 .map_err(|error| Box::<dyn std::error::Error>::from(error))?;
             }
             let _ = sync_autostart(app.handle(), &settings);
+            log_app_event(
+                app.handle(),
+                "app.ready",
+                "Wallpaper Engine startup completed.",
+                settings_log_details(&settings),
+            );
             if start_hidden {
                 hide_main_window(app.handle());
             } else {
@@ -1147,6 +1905,8 @@ pub fn run() {
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
+            write_app_log,
+            get_app_log_path,
             get_settings,
             save_settings,
             search_wallpapers,

@@ -32,6 +32,7 @@ import {
   SupabaseSyncStatus,
   SyncAuthContext,
 } from "../types";
+import { logAppAction } from "../appLog";
 
 const supabaseSchema = `create table if not exists public.wallpaper_engine_sync (
   id text primary key,
@@ -171,6 +172,15 @@ export function SyncPage() {
   }
 
   async function saveDraft() {
+    void logAppAction("sync.settings.save.request", "Sync settings save requested.", {
+      enabled: syncDraft.enabled,
+      projectConfigured: syncDraft.projectUrl.trim().length > 0,
+      anonConfigured: syncDraft.anonKey.trim().length > 0,
+      useClerkAuth: syncDraft.useClerkAuth,
+      syncIdConfigured: syncDraft.syncId.trim().length > 0,
+      clerkEnabled: clerkDraft.enabled,
+      clerkConfigured: clerkDraft.publishableKey.trim().length > 0,
+    });
     await actions.saveSettings({
       ...settings,
       clerkAuth: clerkDraft,
@@ -180,6 +190,7 @@ export function SyncPage() {
 
   function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
+    void logAppAction("sync.form.submit", "Sync form submitted.");
     void saveDraft();
   }
 
@@ -188,6 +199,10 @@ export function SyncPage() {
     pendingMessage: string,
     authContext?: SyncAuthContext | null,
   ) {
+    void logAppAction("sync.run_after_save.start", "Sync action requested after save.", {
+      pendingMessage,
+      hasAuthContext: Boolean(authContext),
+    });
     setConnection({
       state: "checking",
       message: pendingMessage,
@@ -196,6 +211,11 @@ export function SyncPage() {
     await saveDraft();
     const status = await action(authContext ?? null);
     setConnection(connectionPanelForStatus(status));
+    void logAppAction("sync.run_after_save.done", "Sync action after save completed.", {
+      pendingMessage,
+      connected: status?.connected ?? false,
+      message: status?.message ?? "No status returned.",
+    });
   }
 
   return (
@@ -467,6 +487,10 @@ function ClerkRuntimePanel() {
       }
       setBrowserBusy(false);
       setBrowserMessage(detail.message);
+      void logAppAction("clerk.auth.event", "Clerk auth event received.", {
+        state: detail.state,
+        message: detail.message,
+      });
     }
 
     window.addEventListener("wallpaper-engine-clerk-auth", updateFromAuthEvent);
@@ -480,11 +504,21 @@ function ClerkRuntimePanel() {
   async function startBrowserSignIn() {
     if (!clerk.loaded || !isSignInLoaded || !signIn) {
       setBrowserMessage("Clerk is still loading.");
+      void logAppAction(
+        "clerk.browser_sign_in.loading",
+        "Clerk browser sign-in requested before Clerk was loaded.",
+        {},
+        "warn",
+      );
       return;
     }
 
     setBrowserBusy(true);
     setBrowserMessage("Creating browser sign-in...");
+    void logAppAction(
+      "clerk.browser_sign_in.start",
+      "Creating Clerk browser sign-in.",
+    );
     try {
       const signInAttempt = await signIn.create({
         strategy: "oauth_google",
@@ -496,14 +530,28 @@ function ClerkRuntimePanel() {
         await setActive({ session: signInAttempt.createdSessionId });
         setBrowserBusy(false);
         setBrowserMessage("Signed in with Clerk.");
+        void logAppAction(
+          "clerk.browser_sign_in.complete",
+          "Clerk sign-in completed without external browser.",
+        );
         return;
       }
 
       await openUrl(externalClerkVerificationUrl(signInAttempt));
       setBrowserMessage("Continue sign-in in your browser.");
+      void logAppAction(
+        "clerk.browser_sign_in.opened",
+        "Clerk browser sign-in opened in system browser.",
+      );
     } catch (error) {
       setBrowserBusy(false);
       setBrowserMessage(`Browser sign-in failed: ${clerkErrorMessage(error)}`);
+      void logAppAction(
+        "clerk.browser_sign_in.error",
+        "Clerk browser sign-in failed.",
+        { error: clerkErrorMessage(error) },
+        "error",
+      );
     }
   }
 
@@ -633,6 +681,12 @@ function ClerkSyncActionButtons({
         message: "Loading Clerk session...",
         updatedAt: null,
       });
+      void logAppAction(
+        "sync.clerk.loading",
+        "Clerk sync action requested while Clerk was loading.",
+        { pendingMessage },
+        "warn",
+      );
       return;
     }
     if (!isSignedIn || !userId) {
@@ -641,6 +695,12 @@ function ClerkSyncActionButtons({
         message: "Sign in with Clerk before using Supabase sync.",
         updatedAt: null,
       });
+      void logAppAction(
+        "sync.clerk.not_signed_in",
+        "Clerk sync action blocked because user is not signed in.",
+        { pendingMessage },
+        "warn",
+      );
       return;
     }
     const accessToken = await getToken();
@@ -650,8 +710,18 @@ function ClerkSyncActionButtons({
         message: "Clerk session token is missing. Sign in again and retry.",
         updatedAt: null,
       });
+      void logAppAction(
+        "sync.clerk.token_missing",
+        "Clerk sync action blocked because token was missing.",
+        { pendingMessage, hasUserId: Boolean(userId) },
+        "error",
+      );
       return;
     }
+    void logAppAction("sync.clerk.run", "Running Clerk-backed sync action.", {
+      pendingMessage,
+      hasUserId: Boolean(userId),
+    });
     await onRun(action, pendingMessage, {
       accessToken,
       userId,

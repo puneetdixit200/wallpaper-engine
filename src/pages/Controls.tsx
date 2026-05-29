@@ -2,6 +2,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { FormEvent, useEffect, useRef, useState } from "react";
 import { Keyboard, Lock, ShieldCheck } from "lucide-react";
 import { useAppState } from "../appState";
+import { logAppAction } from "../appLog";
 import { hotkeyCaptureFromKeyboardEvent } from "../hotkeyCapture";
 import { AppSettings, QualityGuardMode } from "../types";
 
@@ -46,6 +47,7 @@ export function ControlsPage() {
 
   function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
+    void logAppAction("controls.submit", "Controls form submitted.");
     void actions.saveSettings(draft);
   }
 
@@ -63,6 +65,10 @@ export function ControlsPage() {
     try {
       if (isTauriRuntime()) {
         await invoke("pause_global_hotkeys_for_capture");
+        void logAppAction(
+          "hotkeys.capture.pause",
+          "Global hotkeys paused for capture.",
+        );
       }
     } catch (error) {
       console.warn("Could not pause global hotkeys for capture", error);
@@ -73,6 +79,10 @@ export function ControlsPage() {
     try {
       if (isTauriRuntime()) {
         await invoke("restore_global_hotkeys_after_capture");
+        void logAppAction(
+          "hotkeys.capture.restore",
+          "Global hotkeys restored after capture.",
+        );
       }
     } catch (error) {
       console.warn("Could not restore global hotkeys after capture", error);
@@ -80,6 +90,9 @@ export function ControlsPage() {
   }
 
   function startHotkeyCapture(key: keyof AppSettings["hotkeys"]) {
+    void logAppAction("hotkeys.capture.start", "Hotkey capture started.", {
+      hotkey: key,
+    });
     committingHotkeyRef.current = false;
     captureValueRef.current = "";
     setCapturePreview("");
@@ -88,6 +101,9 @@ export function ControlsPage() {
   }
 
   function resetHotkey(key: keyof AppSettings["hotkeys"]) {
+    void logAppAction("hotkeys.capture.reset", "Hotkey capture reset.", {
+      hotkey: key,
+    });
     setDraft((current) => ({
       ...current,
       hotkeys: {
@@ -107,6 +123,10 @@ export function ControlsPage() {
       return;
     }
 
+    void logAppAction("hotkeys.capture.save", "Hotkey capture saved.", {
+      hotkey: key,
+      value,
+    });
     const nextSettings: AppSettings = {
       ...draft,
       hotkeys: {
@@ -134,6 +154,9 @@ export function ControlsPage() {
       committingHotkeyRef.current = false;
       return;
     }
+    void logAppAction("hotkeys.capture.cancel", "Hotkey capture cancelled.", {
+      hotkey: key,
+    });
     setDraft((current) => ({
       ...current,
       hotkeys: {

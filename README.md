@@ -60,6 +60,7 @@ On Linux, `sha256sum -c installers/SHA256SUMS` also works.
 - Delete wallpapers one by one from the Library screen.
 - Keep the left sidebar static on desktop while content scrolls.
 - Use an adaptive UI that responds to app window resizing.
+- Keep an append-only action log for app startup, UI actions, scheduler ticks, tray actions, hotkeys, sync, cache, library, and wallpaper changes.
 - Keep quality guard and global hotkey controls in a dedicated Controls tab.
 - Show Supabase and Clerk connection state with exact sync errors in the Sync tab.
 - Ask before enabling background mode.
@@ -188,6 +189,16 @@ with check ((select auth.jwt() ->> 'sub') = id);
 For manual Sync ID mode, keep the row ID private and use your own RLS policy choice. Clerk mode is safer because Supabase verifies the Clerk session token and each user can only read or write the row whose `id` matches their Clerk `sub` claim.
 
 The desktop browser sign-in flow uses an HTTPS callback bridge plus Tauri deep links. Clerk returns to `https://puneetdixit200.github.io/wallpaper-engine/auth/callback/`, that page opens `wallpaper-engine://auth/callback`, and the app completes the Clerk session inside the desktop app.
+
+## Action Log
+
+Wallpaper Engine writes a live JSON-lines action log and redacts secret-like fields before writing frontend details. The current file is:
+
+- macOS: `~/Library/Application Support/com.puneetdixit.wallpaperengine/logs/wallpaper-engine.log`
+- Windows: `%APPDATA%\com.puneetdixit.wallpaperengine\logs\wallpaper-engine.log`
+- Linux: `~/.local/share/com.puneetdixit.wallpaperengine/logs/wallpaper-engine.log`
+
+The log records startup, settings saves, searches, wallpaper apply/delete/clear actions, imports, backups, Supabase sync, scheduler ticks, tray menu actions, global hotkeys, and close/background events.
 
 ## Development
 
